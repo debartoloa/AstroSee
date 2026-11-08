@@ -1,0 +1,19 @@
+{
+  "name": "AstroSee — Seeing & Meteo Astronomico",
+  "short_name": "AstroSee",
+  "description": "PWA per il monitoraggio del Seeing, trasparenza atmosferica e meteo astronomico tramite 7Timer! con AI Observing Advisor.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#060814",
+  "theme_color": "#060814",
+  "lang": "it-IT",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+  <meta name="theme-color" content="#060814" />
+  <meta name="description" content="AstroSee: Progressive Web App per il monitoraggio del Seeing Astronomico, Trasparenza Atmosferica e Previsioni 7Timer! con AI Observing Advisor." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>AstroSee — Seeing &amp; Meteo Astronomico</title>
+
+  <!-- PWA Manifest & Icons -->
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+
+  <!-- Leaflet CSS (Interactive Map) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Deep Space Nebula Backdrop -->
+  <div class="cosmic-backdrop" aria-hidden="true"></div>
+
+  <div class="app-container">
+    <!-- Top App Bar -->
+    <header class="app-header glass-panel">
+      <div class="brand-group">
+        <img src="icon.svg" alt="AstroSee Logo" class="brand-logo" />
+        <div>
+          <h1 class="brand-title">AstroSee</h1>
+          <p class="brand-subtitle">7Timer! Astro Seeing &amp; AI Advisor</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div id="connection-status" class="connection-pill" title="Stato connessione e cache offline">
+          <span class="connection-dot"></span>
+          <span id="connection-label">Online</span>
+        </div>
+
+        <button id="btn-night-vision" class="icon-btn" type="button" title="Attiva/Disattiva Modalità Luce Rossa per preservare la visione scotopica notturna">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+          <span>Visione Rossa</span>
+        </button>
+
+        <button id="btn-refresh" class="icon-btn" type="button" title="Aggiorna previsioni 7Timer!">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+            <path d="M3 3v5h5"/>
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+            <path d="M16 16h5v5"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Grid -->
+    <main class="main-grid">
+      <!-- Left Column: Location Controls & Time Window -->
+      <aside style="display: flex; flex-direction: column; gap: 1.15rem;">
+        <!-- 1. Location Selector Card -->
+        <section class="section-card glass-panel" aria-labelledby="loc-heading">
+          <div class="section-header">
+            <h2 id="loc-heading" class="section-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
+                <circle cx="12" cy="10" r="3"/>
+              </svg>
+              Posizione Osservativa
+            </h2>
+          </div>
+
+          <!-- Method 1: Native Browser GPS -->
+          <button id="btn-gps" class="btn-gps" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M12 2v3m0 14v3M2 12h3m14 0h3"/>
+              <circle cx="12" cy="12" r="7"/>
+            </svg>
+            <span>Acquisisci Posizione GPS Automatica</span>
+          </button>
+
+          <!-- Method 3: City Geocoding Search (Nominatim OSM) -->
+          <form id="search-form" class="search-box" autocomplete="off">
+            <div class="search-input-wrapper">
+              <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"/>
+                <path d="m21 21-4.3-4.3"/>
+              </svg>
+              <input
+                id="city-search-input"
+                type="text"
+                class="search-input"
+                placeholder="Cerca città, passo alpino o osservatorio..."
+                aria-label="Cerca località tramite Nominatim OpenStreetMap"
+              />
+              <ul id="geocode-dropdown" class="geocode-results hidden" role="listbox"></ul>
+            </div>
+            <button type="submit" class="btn-search">Cerca</button>
+          </form>
+
+          <!-- Method 2: Interactive Leaflet Map -->
+          <div class="map-wrapper">
+            <div id="astro-map" aria-label="Mappa interattiva per selezione coordinate"></div>
+            <span class="map-hint-badge">Tocca la mappa o trascina il pin</span>
+          </div>
+
+          <!-- Active Coordinates Readout -->
+          <div class="coords-bar">
+            <span id="active-location-label" class="coords-location-name">Asiago (Osservatorio)</span>
+            <span id="active-coords-label" class="coords-numeric">45.866°N, 11.526°E</span>
+          </div>
+
+          <!-- Quick Astronomical Dark Sky Presets -->
+          <div class="presets-row" aria-label="Siti osservativi rapidi">
+            <button type="button" class="preset-chip" data-lat="45.8665" data-lon="11.5268" data-name="Osservatorio di Asiago">✨ Asiago</button>
+            <button type="button" class="preset-chip" data-lat="42.4426" data-lon="13.5889" data-name="Campo Imperatore (Gran Sasso)">🏔️ Gran Sasso</button>
+            <button type="button" class="preset-chip" data-lat="37.6924" data-lon="14.9748" data-name="Monte Etna (Serra La Nave)">🌋 Etna Astro</button>
+            <button type="button" class="preset-chip" data-lat="28.7583" data-lon="-17.8800" data-name="Roque de los Muchachos (La Palma)">🔭 La Palma</button>
+          </div>
+        </section>
+
+        <!-- 2. Time Interval Selection Card -->
+        <section class="section-card glass-panel" aria-labelledby="time-heading">
+          <div class="section-header">
+            <h2 id="time-heading" class="section-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12 6 12 12 16 14"/>
+              </svg>
+              Finestra Temporale
+            </h2>
+          </div>
+
+          <!-- Quick Filter Modes -->
+          <div class="time-filters-bar" role="group" aria-label="Filtri rapidi finestra temporale">
+            <button type="button" class="filter-pill" data-mode="tonight">🌙 Stasera / Notte</button>
+            <button type="button" class="filter-pill active" data-mode="hours" data-hours="24">Prossime 24h</button>
+            <button type="button" class="filter-pill" data-mode="hours" data-hours="48">48 Ore</button>
+            <button type="button" class="filter-pill" data-mode="hours" data-hours="72">72 Ore (3g)</button>
+          </div>
+
+          <!-- Interactive Horizon Slider -->
+          <div class="slider-control-group">
+            <div class="slider-labels">
+              <span class="slider-title">Orizzonte Temporale Analizzato</span>
+              <span id="slider-horizon-val" class="slider-value-badge">Prossime 24 ore</span>
+            </div>
+            <input
+              id="horizon-slider"
+              type="range"
+              class="range-slider"
+              min="6"
+              max="72"
+              step="3"
+              value="24"
+              aria-label="Seleziona il numero di ore da analizzare"
+            />
+            <div class="slider-ticks">
+              <span>+6h</span>
+              <span>+24h (1g)</span>
+              <span>+48h (2g)</span>
+              <span>+72h (3g)</span>
+            </div>
+          </div>
+
+          <!-- Night-Only Toggle Filter -->
+          <label style="display: flex; align-items: center; justify-content: space-between; font-size: 0.78rem; color: var(--text-secondary); cursor: pointer; padding: 0.2rem 0.1rem;">
+            <span>Mostra solo fasce crepuscolari/notturne (18:00 – 06:00)</span>
+            <input id="toggle-night-only" type="checkbox" style="accent-color: var(--accent-cyan); width: 16px; height: 16px; cursor: pointer;" />
+          </label>
+        </section>
+      </aside>
+
+      <!-- Right Column: AI Observing Advisor, Charts & 7Timer! Data Cards -->
+      <div style="display: flex; flex-direction: column; gap: 1.15rem;">
+        <!-- 4. AI Observing Advisor Card -->
+        <section class="section-card glass-panel advisor-card" aria-labelledby="advisor-heading">
+          <div class="advisor-glow" aria-hidden="true"></div>
+
+          <div class="section-header">
+            <h2 id="advisor-heading" class="section-title">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3l1.912 5.813a2 2 0 001.275 1.275L21 12l-5.813 1.912a2 2 0 00-1.275 1.275L12 21l-1.912-5.813a2 2 0 00-1.275-1.275L3 12l5.813-1.912a2 2 0 001.275-1.275L12 3z"/>
+              </svg>
+              AI Observing Advisor
+            </h2>
+            <span id="advisor-score-badge" class="advisor-badge">Indice Astro: --/100</span>
+          </div>
+
+          <div class="advisor-grid">
+            <div class="advisor-main-box">
+              <div id="advisor-headline" class="advisor-headline">
+                Elaborazione telemetria atmosferica 7Timer! in corso...
+              </div>
+              <p id="advisor-narrative" class="advisor-narrative">
+                Analisi combinata di Seeing, Trasparenza, Copertura Nuvolosa, Indice di Lifted e Jet-Stream/Vento al suolo per individuare lo slot ottimale.
+              </p>
+              <div>
+                <span class="advisor-mini-label">Target Consigliati per la Finestra:</span>
+                <div id="advisor-targets" class="target-tags">
+                  <span class="target-tag">In attesa dati...</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="advisor-side-box">
+              <div class="advisor-mini-card">
+                <span class="advisor-mini-label">⚠️ Criticità &amp; Avvisi Atmosferici</span>
+                <ul id="advisor-warnings" class="advisor-warnings-list">
+                  <li>Caricamento analisi stabilità...</li>
+                </ul>
+              </div>
+              <div class="advisor-mini-card">
+                <span class="advisor-mini-label">📡 Riferimento Modello 7Timer!</span>
+                <span id="model-init-info" style="font-size: 0.74rem; color: var(--text-secondary);">
+                  Run GFS/7Timer: --
+                </span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Summary KPI Strip & Visual Trend Chart -->
+        <section class="section-card glass-panel" aria-labelledby="telemetry-heading">
+          <div class="section-header">
+            <h2 id="telemetry-heading" class="section-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 3v18h18"/>
+                <path d="m19 9-5 5-4-4-3 3"/>
+              </svg>
+              Panoramica &amp; Curva di Qualità Osservativa
+            </h2>
+          </div>
+
+          <!-- 4 Quick KPI Boxes -->
+          <div class="kpi-strip">
+            <div class="kpi-box">
+              <span class="kpi-label">Miglior Seeing</span>
+              <span id="kpi-best-seeing" class="kpi-value">--</span>
+              <span id="kpi-best-seeing-sub" class="kpi-sub">--</span>
+            </div>
+            <div class="kpi-box">
+              <span class="kpi-label">Trasparenza Max</span>
+              <span id="kpi-best-trans" class="kpi-value">--</span>
+              <span id="kpi-best-trans-sub" class="kpi-sub">--</span>
+            </div>
+            <div class="kpi-box">
+              <span class="kpi-label">Slot Cielo Sereno</span>
+              <span id="kpi-clear-slots" class="kpi-value">--</span>
+              <span id="kpi-clear-slots-sub" class="kpi-sub">su intervallo</span>
+            </div>
+            <div class="kpi-box">
+              <span class="kpi-label">Vento &amp; Stabilità</span>
+              <span id="kpi-wind-li" class="kpi-value">--</span>
+              <span id="kpi-wind-li-sub" class="kpi-sub">--</span>
+            </div>
+          </div>
+
+          <!-- Interactive Bar Chart -->
+          <div class="chart-container">
+            <div class="chart-legend">
+              <span class="legend-item"><span class="legend-dot" style="background: var(--status-opt-text);"></span> Ottimo (70–100)</span>
+              <span class="legend-item"><span class="legend-dot" style="background: var(--status-mid-text);"></span> Discreto (42–69)</span>
+              <span class="legend-item"><span class="legend-dot" style="background: var(--status-bad-text);"></span> Critico (&lt;42)</span>
+              <span style="margin-left: auto; font-size: 0.68rem; color: var(--text-muted);">Tocca una colonna per andare allo slot</span>
+            </div>
+            <div id="trend-chart" class="trend-bars-grid" role="region" aria-label="Grafico andamento indice astronomico"></div>
+          </div>
+        </section>
+
+        <!-- Detailed 3-Hour Cards Section -->
+        <section class="section-card glass-panel" aria-labelledby="slots-heading">
+          <div class="section-header">
+            <h2 id="slots-heading" class="section-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <rect width="18" height="18" x="3" y="4" rx="2" ry="2"/>
+                <line x1="16" x2="16" y1="2" y2="6"/>
+                <line x1="8" x2="8" y1="2" y2="6"/>
+                <line x1="3" x2="21" y1="10" y2="10"/>
+              </svg>
+              Previsioni Dettagliate 7Timer! (Step 3 Ore)
+            </h2>
+            <span id="slots-count-badge" style="font-size: 0.74rem; color: var(--text-secondary);">-- blocchi</span>
+          </div>
+
+          <!-- Loading Spinner -->
+          <div id="loading-state" class="loading-overlay">
+            <div class="spinner"></div>
+            <p style="font-size: 0.85rem; color: var(--text-secondary);">Connessione a 7Timer! Astro API in corso...</p>
+          </div>
+
+          <!-- Cards Grid -->
+          <div id="forecast-cards-container" class="forecast-cards-list"></div>
+        </section>
+
+        <!-- Technical Reference Legend for 7Timer! Astro Codes -->
+        <section class="section-card glass-panel">
+          <details class="legend-details">
+            <summary class="legend-summary">
+              <span class="section-title" style="font-size: 0.86rem;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <path d="M12 16v-4"/>
+                  <path d="M12 8h.01"/>
+                </svg>
+                Guida alla Decodifica Parametri 7Timer! (Seeing, Trasparenza, CloudCover, Lifted Index)
+              </span>
+              <span style="font-size: 0.72rem; color: var(--accent-cyan);">Mostra/Nascondi ▾</span>
+            </summary>
+            <div class="legend-table-wrap">
+              <table class="legend-table">
+                <thead>
+                  <tr>
+                    <th>Parametro</th>
+                    <th>Scala 7Timer!</th>
+                    <th>Significato Fisico &amp; Soglie Semaforo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>Seeing</strong></td>
+                    <td>Classi 1 – 8</td>
+                    <td>Turbolenza atmosferica in secondi d'arco: <strong>1–2 Ottimo</strong> (&lt;0.75"), <strong>3–4 Discreto</strong> (0.75"–1.25"), <strong>5–8 Pessimo</strong> (&gt;1.25").</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Transparency</strong></td>
+                    <td>Classi 1 – 8</td>
+                    <td>Estinzione atmosferica zenitale (mag/airmass): <strong>1–2 Limpido</strong> (&lt;0.4), <strong>3–4 Discreto</strong> (0.4–0.6), <strong>5–8 Foschia/Velato</strong> (&gt;0.6).</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Cloud Cover</strong></td>
+                    <td>Classi 1 – 9</td>
+                    <td>Copertura nuvolosa: <strong>1–2 Sereno</strong> (0–19%), <strong>3–5 Poco/Parz. Nuvoloso</strong> (19–56%), <strong>6–9 Coperto</strong> (56–100%).</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Lifted Index (LI)</strong></td>
+                    <td>Da -10 a +15</td>
+                    <td>Stabilità termodinamica: <strong>&gt;+2 Molto Stabile</strong> (aria ferma), <strong>da -2 a +2 Neutro</strong>, <strong>&lt;-3 Instabile</strong> (correnti convettive/temporali).</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Wind 10m</strong></td>
+                    <td>Classi 1 – 8</td>
+                    <td>Velocità del vento a 10m: <strong>1–2 Calmo/Brezza</strong> (&lt;3.4 m/s), <strong>3 Moderato</strong> (3.4–8.0 m/s, possibili micro-vibrazioni), <strong>4+ Forte</strong> (&gt;8 m/s).</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast-notification" role="status" aria-live="polite"></div>
+
+  <!-- Leaflet JS via CDN -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <!-- Main Modular Application Script -->
+  <script src="app.js"></script>
+</body>
+</html>
