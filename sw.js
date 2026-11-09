@@ -54,8 +54,13 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
 
-  // 1. Handle 7Timer! Astro API & Nominatim Geocoding (Network-First -> Cache Fallback)
-  if (url.hostname.includes('7timer.info') || url.hostname.includes('nominatim.openstreetmap.org')) {
+  // 1. Handle 7Timer!, Local Proxy, Open-Meteo & Nominatim Geocoding (Network-First -> Cache Fallback)
+  if (
+    url.pathname === '/api/7timer' ||
+    url.hostname.includes('7timer.info') ||
+    url.hostname.includes('open-meteo.com') ||
+    url.hostname.includes('nominatim.openstreetmap.org')
+  ) {
     event.respondWith(
       fetch(request)
         .then((networkResponse) => {

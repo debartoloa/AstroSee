@@ -381,7 +381,8 @@ const APP_STATE = {
   processedSlots: [],
   map: null,
   marker: null,
-  isOfflineData: false
+  isOfflineData: false,
+  dataSourceLabel: '7Timer! Live'
 };
 
 const STORAGE_KEYS = {
@@ -423,7 +424,7 @@ function updateConnectionBadge() {
     label.textContent = navigator.onLine ? 'Cache Locale' : 'Offline (Cache)';
   } else {
     pill.classList.remove('offline');
-    label.textContent = '7Timer! Live';
+    label.textContent = APP_STATE.dataSourceLabel || '7Timer! Live';
   }
 }
 
@@ -655,34 +656,177 @@ function acquireBrowserGPS() {
    6. 7TIMER! ASTRO API INTEGRATION & OFFLINE CACHE
    ========================================================================== */
 
+async function fetchWithTimeout(url, timeoutMs = 8000) {
+  const controller = new AbortController();
+  const timerId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timerId);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  } catch (err) {
+    clearTimeout(timerId);
+    throw err;
+  }
+}
+
+/**
+ * Converts Live Open-Meteo GFS/IFS atmospheric telemetry into exact 7Timer! Astro Product schema
+ * when 7Timer! blocks browser CORS requests directly.
+ */
+async function fetchLiveOpenMeteoAsSevenTimer(lat, lon) {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&hourly=temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,wind_direction_10m,visibility,lifted_index,precipitation&wind_speed_unit=ms&forecast_days=4`;
+  const om = await fetchWithTimeout(url, 8000);
+  if (!om || !om.hourly || !Array.isArray(om.hourly.time)) {
+    throw new Error('Open-Meteo payload non valido');
+  }
+
+  const now = new Date();
+  const yyyy = now.getUTCFullYear();
+  const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(now.getUTCDate()).padStart(2, '0');
+  const hh = String(Math.floor(now.getUTCHours() / 3) * 3).padStart(2, '0');
+
+  // Find index closest to current hour
+  let startIdx = 0;
+  const nowMs = now.getTime();
+  for (let i = 0; i < om.hourly.time.length; i++) {
+    const tMs = new Date(om.hourly.time[i] + 'Z').getTime();
+    if (tMs >= nowMs - 2 * 3600 * 1000) {
+      startIdx = i;
+      break;
+    }
+  }
+
+  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const dataseries = [];
+
+  for (let step = 1; step <= 24; step++) {
+    const idx = startIdx + step * 3;
+    if (idx >= om.hourly.time.length) break;
+
+    const ccPct = om.hourly.cloud_cover?.[idx] ?? 20;
+    const rh = Math.round(om.hourly.relative_humidity_2m?.[idx] ?? 65);
+    const temp = Math.round(om.hourly.temperature_2m?.[idx] ?? 10);
+    const windMs = om.hourly.wind_speed_10m?.[idx] ?? 2.0;
+    const windDeg = om.hourly.wind_direction_10m?.[idx] ?? 0;
+    const visM = om.hourly.visibility?.[idx] ?? 24000;
+    const rawLi = om.hourly.lifted_index?.[idx] ?? 4;
+    const prec = om.hourly.precipitation?.[idx] ?? 0;
+
+    // 1. Cloudcover (1 to 9 scale of 7Timer!)
+    const cloudcover = Math.min(9, Math.max(1, Math.ceil((ccPct + 1) / 11.2)));
+
+    // 2. Wind10m Speed (1 to 8 scale of 7Timer!) & Direction
+    let windSpeedCode = 1;
+    if (windMs >= 32.6) windSpeedCode = 8;
+    else if (windMs >= 24.5) windSpeedCode = 7;
+    else if (windMs >= 17.2) windSpeedCode = 6;
+    else if (windMs >= 10.8) windSpeedCode = 5;
+    else if (windMs >= 8.0) windSpeedCode = 4;
+    else if (windMs >= 3.4) windSpeedCode = 3;
+    else if (windMs >= 0.3) windSpeedCode = 2;
+    const dirStr = dirs[Math.round(((windDeg % 360) / 45)) % 8];
+
+    // 3. Lifted Index quantized to 7Timer! discrete classes (-10, -6, -4, -1, 2, 6, 10, 15)
+    let liClass = 2;
+    if (rawLi <= -8) liClass = -10;
+    else if (rawLi <= -5) liClass = -6;
+    else if (rawLi <= -2.5) liClass = -4;
+    else if (rawLi <= 0.5) liClass = -1;
+    else if (rawLi <= 4) liClass = 2;
+    else if (rawLi <= 8) liClass = 6;
+    else if (rawLi <= 12.5) liClass = 10;
+    else liClass = 15;
+
+    // 4. Transparency (1 to 8 scale based on visibility, humidity & aerosols)
+    let transparency = 2;
+    if (visM >= 28000 && rh < 65) transparency = 1;
+    else if (visM >= 22000 && rh < 75) transparency = 2;
+    else if (visM >= 16000 && rh < 82) transparency = 3;
+    else if (visM >= 11000) transparency = 4;
+    else if (visM >= 7000) transparency = 5;
+    else if (visM >= 4000) transparency = 6;
+    else if (visM >= 2000) transparency = 7;
+    else transparency = 8;
+
+    // 5. Astronomical Seeing (1 to 8 scale based on thermodynamic stability LI, wind shear & humidity)
+    let seeing = 3;
+    const stabilityPenalty = rawLi < 0 ? 2 : rawLi < 3 ? 1 : 0;
+    const windPenalty = windSpeedCode >= 5 ? 3 : windSpeedCode === 4 ? 2 : windSpeedCode === 3 ? 1 : 0;
+    const rhPenalty = rh >= 90 ? 1 : 0;
+    seeing = Math.min(8, Math.max(1, 1 + stabilityPenalty + windPenalty + rhPenalty));
+
+    dataseries.push({
+      timepoint: step * 3,
+      cloudcover,
+      seeing,
+      transparency,
+      lifted_index: liClass,
+      rh2m: rh,
+      wind10m: { direction: dirStr, speed: windSpeedCode },
+      temp2m: temp,
+      prec_type: prec > 0.2 ? 'rain' : 'none'
+    });
+  }
+
+  return {
+    product: 'astro',
+    init: `${yyyy}${mm}${dd}${hh}`,
+    dataseries
+  };
+}
+
 async function fetchAstroForecast(lat, lon, locationName) {
   const loader = document.getElementById('loading-state');
   const cardsContainer = document.getElementById('forecast-cards-container');
   loader?.classList.remove('hidden');
   if (cardsContainer) cardsContainer.style.opacity = '0.4';
 
-  const endpoint = `https://www.7timer.info/bin/api.pl?lon=${lon.toFixed(4)}&lat=${lat.toFixed(4)}&product=astro&output=json`;
+  const direct7TimerUrl = `https://www.7timer.info/bin/api.pl?lon=${lon.toFixed(4)}&lat=${lat.toFixed(4)}&product=astro&output=json`;
+  const localProxyUrl = `/api/7timer?lon=${lon.toFixed(4)}&lat=${lat.toFixed(4)}`;
 
-  try {
-    const controller = new AbortController();
-    const timerId = setTimeout(() => controller.abort(), 11000);
+  let data = null;
+  let sourceLabel = '7Timer! Live';
 
-    const response = await fetch(endpoint, { signal: controller.signal });
-    clearTimeout(timerId);
+  // Strategy 1: Local Node proxy (/api/7timer) if running via `node server.js`
+  if (window.location.protocol.startsWith('http')) {
+    try {
+      const proxyData = await fetchWithTimeout(localProxyUrl, 6500);
+      if (proxyData && Array.isArray(proxyData.dataseries)) {
+        data = proxyData;
+        sourceLabel = '7Timer! Live';
+      }
+    } catch (_) {}
+  }
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
+  // Strategy 2: Direct 7Timer! API call
+  if (!data) {
+    try {
+      const directData = await fetchWithTimeout(direct7TimerUrl, 6000);
+      if (directData && Array.isArray(directData.dataseries)) {
+        data = directData;
+        sourceLabel = '7Timer! Live';
+      }
+    } catch (_) {}
+  }
 
-    const data = await response.json();
-    if (!data || !Array.isArray(data.dataseries)) {
-      throw new Error('Formato JSON 7Timer! non valido');
-    }
+  // Strategy 3: Live Open-Meteo GFS/IFS Telemetry converted to 7Timer! Astro classes (CORS-friendly)
+  if (!data) {
+    try {
+      const liveConverted = await fetchLiveOpenMeteoAsSevenTimer(lat, lon);
+      if (liveConverted && Array.isArray(liveConverted.dataseries)) {
+        data = liveConverted;
+        sourceLabel = 'Live Astro GFS';
+      }
+    } catch (_) {}
+  }
 
+  if (data) {
     APP_STATE.raw7TimerData = data;
     APP_STATE.isOfflineData = false;
+    APP_STATE.dataSourceLabel = sourceLabel;
 
-    // Persist in localStorage for rural/mountain offline access
     try {
       localStorage.setItem(
         STORAGE_KEYS.LAST_FORECAST,
@@ -698,36 +842,39 @@ async function fetchAstroForecast(lat, lon, locationName) {
 
     processSevenTimerPayload(data);
     updateConnectionBadge();
-  } catch (err) {
-    console.warn('7Timer! fetch fallito, uso cache offline o simulazione:', err);
-    APP_STATE.isOfflineData = true;
-    updateConnectionBadge();
-
-    // Try loading last cached forecast from localStorage
-    let loadedFromCache = false;
-    try {
-      const cachedRaw = localStorage.getItem(STORAGE_KEYS.LAST_FORECAST);
-      if (cachedRaw) {
-        const cached = JSON.parse(cachedRaw);
-        if (cached && cached.payload && Array.isArray(cached.payload.dataseries)) {
-          APP_STATE.raw7TimerData = cached.payload;
-          processSevenTimerPayload(cached.payload);
-          loadedFromCache = true;
-          showToast('Connessione assente: caricata ultima previsione salvata in cache.');
-        }
-      }
-    } catch (_) {}
-
-    if (!loadedFromCache) {
-      const fallback = createFallbackAstroPayload();
-      APP_STATE.raw7TimerData = fallback;
-      processSevenTimerPayload(fallback);
-      showToast('Modalità offline: caricato modello astronomico di backup.');
-    }
-  } finally {
     loader?.classList.add('hidden');
     if (cardsContainer) cardsContainer.style.opacity = '1';
+    return;
   }
+
+  // Strategy 4: Offline Cache or Backup Model if there is genuinely no internet connection
+  console.warn('Nessuna connessione live disponibile, uso cache offline o backup.');
+  APP_STATE.isOfflineData = true;
+  updateConnectionBadge();
+
+  let loadedFromCache = false;
+  try {
+    const cachedRaw = localStorage.getItem(STORAGE_KEYS.LAST_FORECAST);
+    if (cachedRaw) {
+      const cached = JSON.parse(cachedRaw);
+      if (cached && cached.payload && Array.isArray(cached.payload.dataseries)) {
+        APP_STATE.raw7TimerData = cached.payload;
+        processSevenTimerPayload(cached.payload);
+        loadedFromCache = true;
+        showToast('Connessione assente: caricata ultima previsione salvata in cache.');
+      }
+    }
+  } catch (_) {}
+
+  if (!loadedFromCache) {
+    const fallback = createFallbackAstroPayload();
+    APP_STATE.raw7TimerData = fallback;
+    processSevenTimerPayload(fallback);
+    showToast('Modalità offline: caricato modello astronomico di backup.');
+  }
+
+  loader?.classList.add('hidden');
+  if (cardsContainer) cardsContainer.style.opacity = '1';
 }
 
 /**
