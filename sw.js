@@ -5,13 +5,13 @@
  * ============================================================================
  */
 
-const STATIC_CACHE_NAME = 'astrosee-static-v1';
+const STATIC_CACHE_NAME = 'astrosee-static-v3';
 const DATA_CACHE_NAME = 'astrosee-data-v1';
 
 const APP_SHELL_ASSETS = [
   './',
   './index.html',
-  './style.css',
+  './style.css?v=3',
   './app.js',
   './manifest.json',
   './icon.svg',
@@ -112,19 +112,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 3. Default App Shell Strategy (Cache-First with Network Fallback)
+  // 3. Default App Shell Strategy (Network-First for local files so updates apply immediately, Cache Fallback offline)
   event.respondWith(
-    caches.match(request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(request).then((networkResponse) => {
+    fetch(request)
+      .then((networkResponse) => {
         if (networkResponse && networkResponse.status === 200) {
           const cloned = networkResponse.clone();
           caches.open(STATIC_CACHE_NAME).then((cache) => cache.put(request, cloned));
         }
         return networkResponse;
-      });
-    })
+      })
+      .catch(() => caches.match(request))
   );
 });

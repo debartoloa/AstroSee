@@ -98,6 +98,7 @@ body.red-night-mode .brand-logo {
 html {
   scroll-behavior: smooth;
   color-scheme: dark;
+  overflow-x: clip;
 }
 
 body {
@@ -106,7 +107,7 @@ body {
   color: var(--text-primary);
   min-height: 100dvh;
   line-height: 1.5;
-  overflow-x: hidden;
+  overflow-x: clip;
   position: relative;
   padding-bottom: 3rem;
 }
@@ -150,6 +151,7 @@ body.red-night-mode .cosmic-backdrop {
   display: flex;
   flex-direction: column;
   gap: 1.15rem;
+  overflow-x: clip;
 }
 
 /* ==========================================================================
@@ -270,13 +272,21 @@ body.red-night-mode .brand-title {
 
 .main-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1.15rem;
+  width: 100%;
+  max-width: 100%;
+}
+
+.main-grid > * {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 @media (min-width: 900px) {
   .main-grid {
-    grid-template-columns: 380px 1fr;
+    grid-template-columns: 380px minmax(0, 1fr);
     align-items: start;
   }
 }
@@ -286,6 +296,9 @@ body.red-night-mode .brand-title {
   display: flex;
   flex-direction: column;
   gap: 0.95rem;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .section-header {
@@ -827,7 +840,11 @@ body.red-night-mode .advisor-card {
   border: 1px solid var(--border-glass);
   border-radius: var(--radius-md);
   padding: 0.85rem;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .chart-legend {
@@ -861,7 +878,7 @@ body.red-night-mode .advisor-card {
 }
 
 .trend-col {
-  flex: 1 0 38px;
+  flex: 0 0 42px;
   display: flex;
   flex-direction: column;
   align-items: center;
