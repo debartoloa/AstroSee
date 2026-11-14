@@ -1,22 +1,31 @@
 /**
  * ============================================================================
- * AstroSee — Seeing & Astronomical Weather PWA
- * Engine: 7Timer! Astro Product API + Nominatim Geocoding + Leaflet.js
+ * AstroSee — Main UI & Observing Advisor Controller (js/app.js)
  * ============================================================================
  */
 
-'use strict';
+import {
+  fetchAstroPayload,
+  fetchBortleData,
+  searchNominatim,
+  reverseGeocode,
+  createFallbackAstroPayload
+} from './api.js';
+
+import {
+  saveLocation,
+  loadLocation,
+  saveForecast,
+  loadForecast,
+  saveRedNightMode,
+  loadRedNightMode
+} from './storage.js';
 
 /* ==========================================================================
    1. 7TIMER! ASTRO PRODUCT DECODERS & LOOKUP TABLES
    ========================================================================== */
 
 const SEVEN_TIMER_DECODERS = {
-  /**
-   * Cloud Cover (1 to 9)
-   * 1: 0%-6%, 2: 6%-19%, 3: 19%-31%, 4: 31%-44%, 5: 44%-56%,
-   * 6: 56%-69%, 7: 69%-81%, 8: 81%-94%, 9: 94%-100%
-   */
   cloudcover(code) {
     const map = {
       1: { label: 'Sereno (0–6%)', pct: 3, level: 'opt', short: '0–6%' },
@@ -32,11 +41,6 @@ const SEVEN_TIMER_DECODERS = {
     return map[code] || { label: `Classe ${code}`, pct: 50, level: 'mid', short: `Cl.${code}` };
   },
 
-  /**
-   * Astronomical Seeing (1 to 8) - Lower is better!
-   * 1: <0.5", 2: 0.5"-0.75", 3: 0.75"-1.0", 4: 1.0"-1.25",
-   * 5: 1.25"-1.5", 6: 1.5"-2.0", 7: 2.0"-2.5", 8: >2.5"
-   */
   seeing(code) {
     const map = {
       1: { label: 'Eccellente (<0.5")', arcsec: '<0.5"', level: 'opt', badge: 'Ottimo' },
@@ -51,11 +55,6 @@ const SEVEN_TIMER_DECODERS = {
     return map[code] || { label: `Classe ${code}`, arcsec: '--', level: 'mid', badge: `Cl.${code}` };
   },
 
-  /**
-   * Atmospheric Transparency (1 to 8) - Lower is better!
-   * Zenithal extinction in mag/airmass:
-   * 1: <0.3, 2: 0.3-0.4, 3: 0.4-0.5, 4: 0.5-0.6, 5: 0.6-0.7, 6: 0.7-0.85, 7: 0.85-1.0, 8: >1.0
-   */
   transparency(code) {
     const map = {
       1: { label: 'Cristallina (<0.3 mag)', ext: '<0.3 mag/am', level: 'opt' },
@@ -70,11 +69,6 @@ const SEVEN_TIMER_DECODERS = {
     return map[code] || { label: `Classe ${code}`, ext: '--', level: 'mid' };
   },
 
-  /**
-   * 10m Wind Speed (1 to 8) & Direction
-   * 1: <0.3m/s, 2: 0.3-3.4m/s, 3: 3.4-8.0m/s, 4: 8.0-10.8m/s,
-   * 5: 10.8-17.2m/s, 6: 17.2-24.5m/s, 7: 24.5-32.6m/s, 8: >32.6m/s
-   */
   wind10m(windObj) {
     const speedCode = windObj && typeof windObj.speed === 'number' ? windObj.speed : 2;
     const dir = windObj && windObj.direction ? windObj.direction : 'N/D';
@@ -92,24 +86,11 @@ const SEVEN_TIMER_DECODERS = {
     return { ...decoded, speedCode, dir };
   },
 
-  /**
-   * Lifted Index (Thermodynamic Stability)
-   * Values in 7Timer: -10, -6, -4, -1, 2, 6, 10, 15
-   * Positive values = Stable air (good laminar flow). Negative = Unstable/Convective.
-   */
   liftedIndex(val) {
-    if (val >= 6) {
-      return { label: `Molto Stabile (+${val})`, desc: 'Aria stratificata ferma', level: 'opt' };
-    }
-    if (val >= 2) {
-      return { label: `Stabile (+${val})`, desc: 'Assenza di moti convettivi', level: 'opt' };
-    }
-    if (val >= -1) {
-      return { label: `Neutro (${val})`, desc: 'Debole rimescolamento', level: 'mid' };
-    }
-    if (val >= -4) {
-      return { label: `Instabile (${val})`, desc: 'Termiche / turbolenza', level: 'bad' };
-    }
+    if (val >= 6) return { label: `Molto Stabile (+${val})`, desc: 'Aria stratificata ferma', level: 'opt' };
+    if (val >= 2) return { label: `Stabile (+${val})`, desc: 'Assenza di moti convettivi', level: 'opt' };
+    if (val >= -1) return { label: `Neutro (${val})`, desc: 'Debole rimescolamento', level: 'mid' };
+    if (val >= -4) return { label: `Instabile (${val})`, desc: 'Termiche / turbolenza', level: 'bad' };
     return { label: `Molto Instabile (${val})`, desc: 'Rischio convezione severa', level: 'bad' };
   }
 };
@@ -118,35 +99,20 @@ const SEVEN_TIMER_DECODERS = {
    2. ASTRO QUALITY SCORE & AI OBSERVING ADVISOR ENGINE
    ========================================================================== */
 
-/**
- * Computes a composite 0-100 Astronomical Observing Quality Score for a single 3-hour slot.
- * Weights cloud cover heavily (if overcast, observing is impossible), then seeing, transparency, wind, and LI.
- */
 function computeAstroScore(slot) {
-  // Cloud factor (0 to 38 pts)
   const cloudPts = Math.max(0, 38 - (slot.cloudcover - 1) * 4.75);
-  // Seeing factor (0 to 28 pts)
   const seeingPts = Math.max(0, 28 - (slot.seeing - 1) * 4.0);
-  // Transparency factor (0 to 18 pts)
   const transPts = Math.max(0, 18 - (slot.transparency - 1) * 2.55);
-  // Wind factor (0 to 10 pts)
   const windSpeed = slot.wind10m?.speed || 2;
   const windPts = Math.max(0, 10 - (windSpeed - 1) * 2.2);
-  // Stability factor (0 to 6 pts)
   const li = typeof slot.lifted_index === 'number' ? slot.lifted_index : 2;
   const liPts = li >= 2 ? 6 : li >= -1 ? 4 : 1;
 
   let raw = Math.round(cloudPts + seeingPts + transPts + windPts + liPts);
 
-  // Heavy penalty if sky is overcast (cloudcover >= 7)
-  if (slot.cloudcover >= 7) {
-    raw = Math.min(raw, 28);
-  } else if (slot.cloudcover === 6) {
-    raw = Math.min(raw, 45);
-  }
-  if (slot.prec_type && slot.prec_type !== 'none') {
-    raw = Math.min(raw, 15);
-  }
+  if (slot.cloudcover >= 7) raw = Math.min(raw, 28);
+  else if (slot.cloudcover === 6) raw = Math.min(raw, 45);
+  if (slot.prec_type && slot.prec_type !== 'none') raw = Math.min(raw, 15);
 
   const score = Math.max(5, Math.min(100, raw));
   let semaphore = 'bad';
@@ -163,13 +129,8 @@ function computeAstroScore(slot) {
   return { score, semaphore, statusText };
 }
 
-/**
- * Parses 7Timer! `init` string (e.g., "2026110806") into a UTC Date object.
- */
 function parseSevenTimerInit(initStr) {
-  if (!initStr || typeof initStr !== 'string' || initStr.length < 10) {
-    return new Date();
-  }
+  if (!initStr || typeof initStr !== 'string' || initStr.length < 10) return new Date();
   const year = parseInt(initStr.slice(0, 4), 10);
   const month = parseInt(initStr.slice(4, 6), 10) - 1;
   const day = parseInt(initStr.slice(6, 8), 10);
@@ -177,64 +138,6 @@ function parseSevenTimerInit(initStr) {
   return new Date(Date.UTC(year, month, day, hour, 0, 0));
 }
 
-/**
- * Generates a realistic fallback 7Timer! dataset if the device is completely offline on first boot
- * and no cached response exists yet.
- */
-function createFallbackAstroPayload() {
-  const now = new Date();
-  const yyyy = now.getUTCFullYear();
-  const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(now.getUTCDate()).padStart(2, '0');
-  const hh = String(Math.floor(now.getUTCHours() / 6) * 6).padStart(2, '0');
-
-  const pattern = [
-    { tp: 3, cc: 3, see: 3, tr: 3, li: 2, ws: 2, wd: 'NW', t: 11, rh: 68 },
-    { tp: 6, cc: 2, see: 2, tr: 2, li: 6, ws: 2, wd: 'N', t: 8, rh: 64 },
-    { tp: 9, cc: 1, see: 2, tr: 1, li: 6, ws: 1, wd: 'N', t: 6, rh: 60 },
-    { tp: 12, cc: 1, see: 1, tr: 2, li: 10, ws: 1, wd: 'NE', t: 5, rh: 58 },
-    { tp: 15, cc: 2, see: 2, tr: 2, li: 6, ws: 2, wd: 'NE', t: 7, rh: 62 },
-    { tp: 18, cc: 4, see: 4, tr: 3, li: 2, ws: 3, wd: 'E', t: 13, rh: 55 },
-    { tp: 21, cc: 5, see: 4, tr: 4, li: -1, ws: 3, wd: 'SE', t: 15, rh: 60 },
-    { tp: 24, cc: 3, see: 3, tr: 3, li: 2, ws: 2, wd: 'S', t: 11, rh: 70 },
-    { tp: 27, cc: 2, see: 2, tr: 2, li: 6, ws: 2, wd: 'SW', t: 8, rh: 72 },
-    { tp: 30, cc: 1, see: 2, tr: 1, li: 6, ws: 2, wd: 'W', t: 7, rh: 68 },
-    { tp: 33, cc: 2, see: 3, tr: 2, li: 2, ws: 2, wd: 'NW', t: 6, rh: 70 },
-    { tp: 36, cc: 4, see: 4, tr: 4, li: -1, ws: 3, wd: 'NW', t: 10, rh: 65 },
-    { tp: 39, cc: 6, see: 5, tr: 5, li: -4, ws: 4, wd: 'W', t: 14, rh: 74 },
-    { tp: 42, cc: 7, see: 6, tr: 6, li: -4, ws: 4, wd: 'SW', t: 13, rh: 82 },
-    { tp: 45, cc: 5, see: 4, tr: 4, li: -1, ws: 3, wd: 'W', t: 10, rh: 78 },
-    { tp: 48, cc: 2, see: 2, tr: 2, li: 6, ws: 2, wd: 'NW', t: 8, rh: 66 },
-    { tp: 51, cc: 1, see: 1, tr: 1, li: 10, ws: 1, wd: 'N', t: 6, rh: 60 },
-    { tp: 54, cc: 1, see: 2, tr: 1, li: 10, ws: 1, wd: 'N', t: 5, rh: 58 },
-    { tp: 57, cc: 2, see: 2, tr: 2, li: 6, ws: 2, wd: 'NE', t: 7, rh: 60 },
-    { tp: 60, cc: 3, see: 3, tr: 3, li: 2, ws: 2, wd: 'E', t: 12, rh: 55 },
-    { tp: 63, cc: 3, see: 3, tr: 3, li: 2, ws: 2, wd: 'E', t: 14, rh: 54 },
-    { tp: 66, cc: 2, see: 2, tr: 2, li: 6, ws: 2, wd: 'NE', t: 10, rh: 62 },
-    { tp: 69, cc: 1, see: 2, tr: 1, li: 6, ws: 1, wd: 'N', t: 7, rh: 64 },
-    { tp: 72, cc: 1, see: 2, tr: 2, li: 6, ws: 2, wd: 'N', t: 6, rh: 65 }
-  ];
-
-  return {
-    product: 'astro',
-    init: `${yyyy}${mm}${dd}${hh}`,
-    dataseries: pattern.map((p) => ({
-      timepoint: p.tp,
-      cloudcover: p.cc,
-      seeing: p.see,
-      transparency: p.tr,
-      lifted_index: p.li,
-      rh2m: p.rh,
-      wind10m: { direction: p.wd, speed: p.ws },
-      temp2m: p.t,
-      prec_type: 'none'
-    }))
-  };
-}
-
-/**
- * Generates the AI Observing Advisor synthesis for the currently selected slots.
- */
 function buildAIObservingAdvisor(slots, locationName) {
   if (!slots || slots.length === 0) {
     return {
@@ -246,19 +149,14 @@ function buildAIObservingAdvisor(slots, locationName) {
     };
   }
 
-  // Prefer night/twilight slots when looking for the best astronomical window, fallback to all slots
   const nightSlots = slots.filter((s) => s.isNight);
   const candidatePool = nightSlots.length > 0 ? nightSlots : slots;
 
-  // Find best contiguous 2-slot window or best single slot
   let bestSlot = candidatePool[0];
   for (const s of candidatePool) {
-    if (s.quality.score > bestSlot.quality.score) {
-      bestSlot = s;
-    }
+    if (s.quality.score > bestSlot.quality.score) bestSlot = s;
   }
 
-  // Check if the adjacent slot is also good (>= 60) to form a wider time window
   const idxInAll = slots.findIndex((s) => s.timepoint === bestSlot.timepoint);
   const nextSlot = idxInAll >= 0 && idxInAll + 1 < slots.length ? slots[idxInAll + 1] : null;
 
@@ -288,7 +186,6 @@ function buildAIObservingAdvisor(slots, locationName) {
     narrative = `Il modello 7Timer! indica condizioni avverse nell'intervallo scelto. Il momento meno penalizzato è intorno alle <strong>${startHourStr} (${dayLabel})</strong>, ma con copertura nuvolosa <strong>${cloudInfo.label}</strong> e seeing in <strong>classe ${bestSlot.seeing}</strong>. Si suggerisce di posticipare la sessione.`;
   }
 
-  // Recommended Astronomical Targets based on Seeing, Transparency & Bortle Class
   const targets = [];
   const bortle = APP_STATE.bortleInfo?.bortleClass;
   if (bestSlot.cloudcover <= 3) {
@@ -303,16 +200,13 @@ function buildAIObservingAdvisor(slots, locationName) {
     } else if (bestSlot.transparency <= 4) {
       targets.push('🔭 Nebulose a Emissione (Filtri H-Alpha / OIII)');
     }
-    if (targets.length === 0) {
-      targets.push('✨ Ammassi Aperti & Globulari Luminosi');
-    }
+    if (targets.length === 0) targets.push('✨ Ammassi Aperti & Globulari Luminosi');
   } else if (bestSlot.cloudcover <= 5) {
     targets.push('🌙 Osservazione Rapida tra Velature (Luna / Pianeti)');
   } else {
     targets.push('⏸️ Sospensione Osservativa / Manutenzione Ottiche');
   }
 
-  // Detect Critical Warnings across the selected interval
   const warnings = [];
   const windySlots = slots.filter((s) => (s.wind10m?.speed || 1) >= 3);
   const cloudySlots = slots.filter((s) => s.cloudcover >= 6);
@@ -327,14 +221,12 @@ function buildAIObservingAdvisor(slots, locationName) {
       `💨 Attenzione a raffiche di vento (${wInfo.kmh} da ${wInfo.dir}) intorno alle ${formatHour(firstWind.date)}: possibili micro-vibrazioni sulla montatura.`
     );
   }
-
   if (cloudySlots.length > 0) {
     const firstCloud = cloudySlots[0];
     warnings.push(
       `☁️ Passaggio di nuvolosità compatta o velature spesse a partire dalle ${formatHour(firstCloud.date)} (${formatShortDay(firstCloud.date)}).`
     );
   }
-
   if (unstableSlots.length > 0) {
     const firstUnstable = unstableSlots[0];
     warnings.push(
@@ -346,13 +238,11 @@ function buildAIObservingAdvisor(slots, locationName) {
       `🌊 Degrado del seeing (classe ${firstBadSee.seeing}, >1.25") previsto verso le ${formatHour(firstBadSee.date)}.`
     );
   }
-
   if (humidSlots.length > 0) {
     warnings.push(
-      `💧 Umidità relativa elevata (>80%): attiva le fasce anticondensa e il paraluce per evitare appannamento della lastra correttrice.`
+      '💧 Umidità relativa elevata (>80%): attiva le fasce anticondensa e il paraluce per evitare appannamento della lastra correttrice.'
     );
   }
-
   if (warnings.length === 0) {
     warnings.push(
       '✅ Nessuna criticità severa rilevata: colonna d\'aria stabile, vento calmo al suolo e assenza di perturbazioni.'
@@ -370,7 +260,7 @@ function buildAIObservingAdvisor(slots, locationName) {
 }
 
 /* ==========================================================================
-   3. APPLICATION STATE & DOM REFERENCES
+   3. APPLICATION STATE & INITIALIZATION
    ========================================================================== */
 
 const APP_STATE = {
@@ -378,7 +268,7 @@ const APP_STATE = {
   lon: 11.5268,
   locationName: 'Osservatorio di Asiago',
   horizonHours: 24,
-  filterMode: 'hours', // 'tonight' | 'hours'
+  filterMode: 'hours',
   nightOnly: false,
   raw7TimerData: null,
   processedSlots: [],
@@ -389,24 +279,14 @@ const APP_STATE = {
   bortleInfo: null
 };
 
-const STORAGE_KEYS = {
-  LAST_LOCATION: 'astrosee_last_location_v1',
-  LAST_FORECAST: 'astrosee_last_forecast_v1',
-  RED_NIGHT_MODE: 'astrosee_red_night_v1'
-};
-
-/* ==========================================================================
-   4. INITIALIZATION & EVENT LISTENERS
-   ========================================================================== */
-
 document.addEventListener('DOMContentLoaded', () => {
   initServiceWorker();
   restoreSavedPreferences();
   initLeafletMap();
   bindUIEvents();
   updateConnectionBadge();
-  fetchBortleEstimate(APP_STATE.lat, APP_STATE.lon);
-  fetchAstroForecast(APP_STATE.lat, APP_STATE.lon, APP_STATE.locationName);
+  updateBortleEstimate(APP_STATE.lat, APP_STATE.lon);
+  loadAstroForecast(APP_STATE.lat, APP_STATE.lon, APP_STATE.locationName);
 });
 
 function initServiceWorker() {
@@ -434,28 +314,20 @@ function updateConnectionBadge() {
 }
 
 function restoreSavedPreferences() {
-  try {
-    const savedLoc = localStorage.getItem(STORAGE_KEYS.LAST_LOCATION);
-    if (savedLoc) {
-      const parsed = JSON.parse(savedLoc);
-      if (typeof parsed.lat === 'number' && typeof parsed.lon === 'number') {
-        APP_STATE.lat = parsed.lat;
-        APP_STATE.lon = parsed.lon;
-        APP_STATE.locationName = parsed.name || 'Posizione salvata';
-      }
-    }
-    const redMode = localStorage.getItem(STORAGE_KEYS.RED_NIGHT_MODE);
-    if (redMode === '1') {
-      document.body.classList.add('red-night-mode');
-      document.getElementById('btn-night-vision')?.classList.add('active-red');
-    }
-  } catch (e) {
-    console.warn('Impossibile leggere preferenze locali:', e);
+  const savedLoc = loadLocation();
+  if (savedLoc) {
+    APP_STATE.lat = savedLoc.lat;
+    APP_STATE.lon = savedLoc.lon;
+    APP_STATE.locationName = savedLoc.name || 'Posizione salvata';
+  }
+  if (loadRedNightMode()) {
+    document.body.classList.add('red-night-mode');
+    document.getElementById('btn-night-vision')?.classList.add('active-red');
   }
 }
 
 /* ==========================================================================
-   5. INTERACTIVE MAP (LEAFLET.JS) & GEOLOCATION / GEOCODING
+   4. INTERACTIVE MAP, GPS, GEOCODING & BORTLE
    ========================================================================== */
 
 function initLeafletMap() {
@@ -473,7 +345,6 @@ function initLeafletMap() {
     maxZoom: 17
   }).addTo(APP_STATE.map);
 
-  // Custom glowing cyan pin icon
   const pinIcon = L.divIcon({
     className: 'custom-astro-pin',
     html: `<div style="
@@ -493,18 +364,16 @@ function initLeafletMap() {
     icon: pinIcon
   }).addTo(APP_STATE.map);
 
-  // Click anywhere on map to relocate
   APP_STATE.map.on('click', (e) => {
     const { lat, lng } = e.latlng;
     selectCoordinates(lat, lng, `Mappa (${lat.toFixed(2)}°, ${lng.toFixed(2)}°)`);
-    reverseGeocodeName(lat, lng);
+    resolveLocalityName(lat, lng);
   });
 
-  // Drag marker to relocate
   APP_STATE.marker.on('dragend', () => {
     const pos = APP_STATE.marker.getLatLng();
     selectCoordinates(pos.lat, pos.lng, `Pin (${pos.lat.toFixed(2)}°, ${pos.lng.toFixed(2)}°)`);
-    reverseGeocodeName(pos.lat, pos.lng);
+    resolveLocalityName(pos.lat, pos.lng);
   });
 }
 
@@ -514,9 +383,7 @@ function selectCoordinates(lat, lon, name, panMap = true) {
 
   APP_STATE.lat = clampedLat;
   APP_STATE.lon = clampedLon;
-  if (name) {
-    APP_STATE.locationName = name;
-  }
+  if (name) APP_STATE.locationName = name;
 
   updateCoordinatesReadout();
 
@@ -529,72 +396,23 @@ function selectCoordinates(lat, lon, name, panMap = true) {
     });
   }
 
-  try {
-    localStorage.setItem(
-      STORAGE_KEYS.LAST_LOCATION,
-      JSON.stringify({ lat: clampedLat, lon: clampedLon, name: APP_STATE.locationName })
-    );
-  } catch (_) {}
-
-  fetchBortleEstimate(clampedLat, clampedLon);
-  fetchAstroForecast(clampedLat, clampedLon, APP_STATE.locationName);
+  saveLocation(clampedLat, clampedLon, APP_STATE.locationName);
+  updateBortleEstimate(clampedLat, clampedLon);
+  loadAstroForecast(clampedLat, clampedLon, APP_STATE.locationName);
 }
 
-const BORTLE_SCALE = {
-  1: { label: 'Cielo Buio Eccellente', sqm: '21.99–22.0', level: 'opt' },
-  2: { label: 'Sito Veramente Buio', sqm: '21.89–21.99', level: 'opt' },
-  3: { label: 'Cielo Rurale', sqm: '21.69–21.89', level: 'opt' },
-  4: { label: 'Transizione Rurale/Suburbana', sqm: '20.49–21.69', level: 'opt' },
-  5: { label: 'Cielo Suburbano', sqm: '19.50–20.49', level: 'mid' },
-  6: { label: 'Suburbano Luminoso', sqm: '18.94–19.50', level: 'mid' },
-  7: { label: 'Transizione Suburbana/Urbana', sqm: '18.38–18.94', level: 'bad' },
-  8: { label: 'Cielo Urbano', sqm: '17.80–18.38', level: 'bad' },
-  9: { label: 'Centro Città', sqm: '<17.80', level: 'bad' }
-};
-
-function estimateBortleClass(geoData, elevationM) {
-  const addr = geoData?.address || {};
-  const category = geoData?.category || '';
-  const type = geoData?.type || '';
-  const pop = parseInt(geoData?.extratags?.population || '0', 10) || 0;
-  const elev = typeof elevationM === 'number' ? elevationM : 200;
-
-  let bortle = 5;
-
-  const isNaturalOrMountain =
-    ['natural', 'boundary', 'tourism', 'leisure'].includes(category) ||
-    ['peak', 'mountain_pass', 'ridge', 'forest', 'park', 'nature_reserve', 'protected_area', 'glacier'].includes(type) ||
-    Boolean(addr.peak || addr.mountain_pass || addr.nature_reserve);
-
-  const isDenseUrban =
-    Boolean(addr.neighbourhood || addr.quarter || addr.city_district || addr.suburb) &&
-    Boolean(addr.city);
-
-  if (pop >= 500000 || (isDenseUrban && elev < 300)) {
-    bortle = 8;
-    if (pop >= 1000000 || type === 'city_block' || category === 'amenity') bortle = 9;
-  } else if (addr.city || pop >= 80000) {
-    bortle = isNaturalOrMountain ? 5 : 7;
-  } else if (addr.town || pop >= 10000) {
-    bortle = elev >= 800 ? 5 : 6;
-  } else if (addr.village || addr.hamlet) {
-    if (elev >= 1500) bortle = 3;
-    else if (elev >= 800) bortle = 4;
-    else bortle = 5;
-  } else if (isNaturalOrMountain || (!addr.city && !addr.town)) {
-    if (elev >= 2100) bortle = 2;
-    else if (elev >= 1300) bortle = 3;
-    else if (elev >= 550) bortle = 4;
-    else bortle = 4;
+function updateCoordinatesReadout() {
+  const nameEl = document.getElementById('active-location-label');
+  const coordsEl = document.getElementById('active-coords-label');
+  if (nameEl) nameEl.textContent = APP_STATE.locationName;
+  if (coordsEl) {
+    const ns = APP_STATE.lat >= 0 ? 'N' : 'S';
+    const ew = APP_STATE.lon >= 0 ? 'E' : 'W';
+    coordsEl.textContent = `${Math.abs(APP_STATE.lat).toFixed(3)}°${ns}, ${Math.abs(APP_STATE.lon).toFixed(3)}°${ew}`;
   }
-
-  // Elevation bonus for high-altitude observatories (>1800m)
-  if (elev >= 2300 && bortle > 2) bortle = Math.max(2, bortle - 1);
-
-  return Math.max(1, Math.min(9, bortle));
 }
 
-async function fetchBortleEstimate(lat, lon) {
+async function updateBortleEstimate(lat, lon) {
   const badgeEl = document.getElementById('bortle-badge');
   const descEl = document.getElementById('bortle-desc');
   const sqmEl = document.getElementById('bortle-sqm');
@@ -603,32 +421,10 @@ async function fetchBortleEstimate(lat, lon) {
   if (descEl) descEl.textContent = 'Calcolo inquinamento luminoso...';
 
   try {
-    const elevUrl = `https://api.open-meteo.com/v1/elevation?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}`;
-    const geoUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&zoom=14&extratags=1&accept-language=it`;
-
-    const [elevRes, geoRes] = await Promise.allSettled([
-      fetchWithTimeout(elevUrl, 5500),
-      fetchWithTimeout(geoUrl, 5500)
-    ]);
-
-    const elevationM =
-      elevRes.status === 'fulfilled' && Array.isArray(elevRes.value?.elevation)
-        ? Math.round(elevRes.value.elevation[0])
-        : null;
-    const geoData = geoRes.status === 'fulfilled' ? geoRes.value : null;
-
-    const bortleClass = estimateBortleClass(geoData, elevationM);
-    const meta = BORTLE_SCALE[bortleClass];
-
-    APP_STATE.bortleInfo = {
-      bortleClass,
-      elevationM,
-      ...meta
-    };
+    APP_STATE.bortleInfo = await fetchBortleData(lat, lon);
     renderBortleReadout();
     if (APP_STATE.processedSlots.length > 0) {
-      const slots = getFilteredSlots();
-      renderAdvisorBox(buildAIObservingAdvisor(slots, APP_STATE.locationName));
+      renderAdvisorBox(buildAIObservingAdvisor(getFilteredSlots(), APP_STATE.locationName));
     }
   } catch (_) {
     if (badgeEl) badgeEl.textContent = 'Bortle N/D';
@@ -657,51 +453,19 @@ function renderBortleReadout() {
   }
 }
 
-function updateCoordinatesReadout() {
-  const nameEl = document.getElementById('active-location-label');
-  const coordsEl = document.getElementById('active-coords-label');
-  if (nameEl) nameEl.textContent = APP_STATE.locationName;
-  if (coordsEl) {
-    const ns = APP_STATE.lat >= 0 ? 'N' : 'S';
-    const ew = APP_STATE.lon >= 0 ? 'E' : 'W';
-    coordsEl.textContent = `${Math.abs(APP_STATE.lat).toFixed(3)}°${ns}, ${Math.abs(APP_STATE.lon).toFixed(3)}°${ew}`;
-  }
-}
-
-/**
- * Reverse geocodes coordinates via Nominatim OpenStreetMap to display locality name when clicking map
- */
-async function reverseGeocodeName(lat, lon) {
+async function resolveLocalityName(lat, lon) {
   if (!navigator.onLine) return;
   try {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&zoom=12&accept-language=it`;
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (!res.ok) return;
-    const data = await res.json();
-    const addr = data.address || {};
-    const locality =
-      addr.Peak ||
-      addr.mountain_pass ||
-      addr.village ||
-      addr.town ||
-      addr.city ||
-      addr.municipality ||
-      addr.county ||
-      data.name;
+    const locality = await reverseGeocode(lat, lon);
     if (locality) {
       APP_STATE.locationName = locality;
       updateCoordinatesReadout();
       renderFilteredView();
     }
-  } catch (_) {
-    // Keep coordinate fallback label if offline or rate-limited
-  }
+  } catch (_) {}
 }
 
-/**
- * Forward geocoding search via Nominatim OpenStreetMap API
- */
-async function searchCityNominatim(query) {
+async function handleCitySearch(query) {
   const dropdown = document.getElementById('geocode-dropdown');
   if (!query || query.trim().length < 2) {
     dropdown?.classList.add('hidden');
@@ -709,13 +473,7 @@ async function searchCityNominatim(query) {
   }
 
   try {
-    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(
-      query.trim()
-    )}&limit=5&accept-language=it`;
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (!res.ok) throw new Error('Errore Nominatim');
-    const results = await res.json();
-
+    const results = await searchNominatim(query);
     if (!Array.isArray(results) || results.length === 0) {
       dropdown.innerHTML = `<li class="geocode-item"><span class="geocode-item-sub">Nessuna località trovata per "${escapeHtml(query)}"</span></li>`;
       dropdown.classList.remove('hidden');
@@ -736,14 +494,11 @@ async function searchCityNominatim(query) {
       })
       .join('');
     dropdown.classList.remove('hidden');
-  } catch (err) {
+  } catch (_) {
     showToast('Ricerca città non disponibile offline. Usa la mappa o i preset.');
   }
 }
 
-/**
- * Acquires coordinates via browser native navigator.geolocation
- */
 function acquireBrowserGPS() {
   if (!('geolocation' in navigator)) {
     showToast('Geolocalizzazione GPS non supportata da questo browser.');
@@ -762,7 +517,7 @@ function acquireBrowserGPS() {
       const { latitude, longitude } = pos.coords;
       showToast('Posizione GPS acquisita con successo!');
       selectCoordinates(latitude, longitude, 'Posizione GPS Attuale');
-      reverseGeocodeName(latitude, longitude);
+      resolveLocalityName(latitude, longitude);
     },
     (err) => {
       btn.disabled = false;
@@ -776,220 +531,39 @@ function acquireBrowserGPS() {
 }
 
 /* ==========================================================================
-   6. 7TIMER! ASTRO API INTEGRATION & OFFLINE CACHE
+   5. FORECAST LOADING & PROCESSING
    ========================================================================== */
 
-async function fetchWithTimeout(url, timeoutMs = 8000) {
-  const controller = new AbortController();
-  const timerId = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    clearTimeout(timerId);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return await response.json();
-  } catch (err) {
-    clearTimeout(timerId);
-    throw err;
-  }
-}
-
-/**
- * Converts Live Open-Meteo GFS/IFS atmospheric telemetry into exact 7Timer! Astro Product schema
- * when 7Timer! blocks browser CORS requests directly.
- */
-async function fetchLiveOpenMeteoAsSevenTimer(lat, lon) {
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&hourly=temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,wind_direction_10m,visibility,lifted_index,precipitation&wind_speed_unit=ms&forecast_days=4`;
-  const om = await fetchWithTimeout(url, 8000);
-  if (!om || !om.hourly || !Array.isArray(om.hourly.time)) {
-    throw new Error('Open-Meteo payload non valido');
-  }
-
-  const now = new Date();
-  const yyyy = now.getUTCFullYear();
-  const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(now.getUTCDate()).padStart(2, '0');
-  const hh = String(Math.floor(now.getUTCHours() / 3) * 3).padStart(2, '0');
-
-  // Find index closest to current hour
-  let startIdx = 0;
-  const nowMs = now.getTime();
-  for (let i = 0; i < om.hourly.time.length; i++) {
-    const tMs = new Date(om.hourly.time[i] + 'Z').getTime();
-    if (tMs >= nowMs - 2 * 3600 * 1000) {
-      startIdx = i;
-      break;
-    }
-  }
-
-  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-  const dataseries = [];
-
-  for (let step = 1; step <= 24; step++) {
-    const idx = startIdx + step * 3;
-    if (idx >= om.hourly.time.length) break;
-
-    const ccPct = om.hourly.cloud_cover?.[idx] ?? 20;
-    const rh = Math.round(om.hourly.relative_humidity_2m?.[idx] ?? 65);
-    const temp = Math.round(om.hourly.temperature_2m?.[idx] ?? 10);
-    const windMs = om.hourly.wind_speed_10m?.[idx] ?? 2.0;
-    const windDeg = om.hourly.wind_direction_10m?.[idx] ?? 0;
-    const visM = om.hourly.visibility?.[idx] ?? 24000;
-    const rawLi = om.hourly.lifted_index?.[idx] ?? 4;
-    const prec = om.hourly.precipitation?.[idx] ?? 0;
-
-    // 1. Cloudcover (1 to 9 scale of 7Timer!)
-    const cloudcover = Math.min(9, Math.max(1, Math.ceil((ccPct + 1) / 11.2)));
-
-    // 2. Wind10m Speed (1 to 8 scale of 7Timer!) & Direction
-    let windSpeedCode = 1;
-    if (windMs >= 32.6) windSpeedCode = 8;
-    else if (windMs >= 24.5) windSpeedCode = 7;
-    else if (windMs >= 17.2) windSpeedCode = 6;
-    else if (windMs >= 10.8) windSpeedCode = 5;
-    else if (windMs >= 8.0) windSpeedCode = 4;
-    else if (windMs >= 3.4) windSpeedCode = 3;
-    else if (windMs >= 0.3) windSpeedCode = 2;
-    const dirStr = dirs[Math.round(((windDeg % 360) / 45)) % 8];
-
-    // 3. Lifted Index quantized to 7Timer! discrete classes (-10, -6, -4, -1, 2, 6, 10, 15)
-    let liClass = 2;
-    if (rawLi <= -8) liClass = -10;
-    else if (rawLi <= -5) liClass = -6;
-    else if (rawLi <= -2.5) liClass = -4;
-    else if (rawLi <= 0.5) liClass = -1;
-    else if (rawLi <= 4) liClass = 2;
-    else if (rawLi <= 8) liClass = 6;
-    else if (rawLi <= 12.5) liClass = 10;
-    else liClass = 15;
-
-    // 4. Transparency (1 to 8 scale based on visibility, humidity & aerosols)
-    let transparency = 2;
-    if (visM >= 28000 && rh < 65) transparency = 1;
-    else if (visM >= 22000 && rh < 75) transparency = 2;
-    else if (visM >= 16000 && rh < 82) transparency = 3;
-    else if (visM >= 11000) transparency = 4;
-    else if (visM >= 7000) transparency = 5;
-    else if (visM >= 4000) transparency = 6;
-    else if (visM >= 2000) transparency = 7;
-    else transparency = 8;
-
-    // 5. Astronomical Seeing (1 to 8 scale based on thermodynamic stability LI, wind shear & humidity)
-    let seeing = 3;
-    const stabilityPenalty = rawLi < 0 ? 2 : rawLi < 3 ? 1 : 0;
-    const windPenalty = windSpeedCode >= 5 ? 3 : windSpeedCode === 4 ? 2 : windSpeedCode === 3 ? 1 : 0;
-    const rhPenalty = rh >= 90 ? 1 : 0;
-    seeing = Math.min(8, Math.max(1, 1 + stabilityPenalty + windPenalty + rhPenalty));
-
-    dataseries.push({
-      timepoint: step * 3,
-      cloudcover,
-      seeing,
-      transparency,
-      lifted_index: liClass,
-      rh2m: rh,
-      wind10m: { direction: dirStr, speed: windSpeedCode },
-      temp2m: temp,
-      prec_type: prec > 0.2 ? 'rain' : 'none'
-    });
-  }
-
-  return {
-    product: 'astro',
-    init: `${yyyy}${mm}${dd}${hh}`,
-    dataseries
-  };
-}
-
-async function fetchAstroForecast(lat, lon, locationName) {
+async function loadAstroForecast(lat, lon, locationName) {
   const loader = document.getElementById('loading-state');
   const cardsContainer = document.getElementById('forecast-cards-container');
   loader?.classList.remove('hidden');
   if (cardsContainer) cardsContainer.style.opacity = '0.4';
 
-  const direct7TimerUrl = `https://www.7timer.info/bin/api.pl?lon=${lon.toFixed(4)}&lat=${lat.toFixed(4)}&product=astro&output=json`;
-  const localProxyUrl = `/api/7timer?lon=${lon.toFixed(4)}&lat=${lat.toFixed(4)}`;
+  const result = await fetchAstroPayload(lat, lon);
 
-  let data = null;
-  let sourceLabel = '7Timer! Live';
-
-  // Strategy 1: Local Node proxy (/api/7timer) if running via `node server.js`
-  if (window.location.protocol.startsWith('http')) {
-    try {
-      const proxyData = await fetchWithTimeout(localProxyUrl, 6500);
-      if (proxyData && Array.isArray(proxyData.dataseries)) {
-        data = proxyData;
-        sourceLabel = '7Timer! Live';
-      }
-    } catch (_) {}
-  }
-
-  // Strategy 2: Direct 7Timer! API call
-  if (!data) {
-    try {
-      const directData = await fetchWithTimeout(direct7TimerUrl, 6000);
-      if (directData && Array.isArray(directData.dataseries)) {
-        data = directData;
-        sourceLabel = '7Timer! Live';
-      }
-    } catch (_) {}
-  }
-
-  // Strategy 3: Live Open-Meteo GFS/IFS Telemetry converted to 7Timer! Astro classes (CORS-friendly)
-  if (!data) {
-    try {
-      const liveConverted = await fetchLiveOpenMeteoAsSevenTimer(lat, lon);
-      if (liveConverted && Array.isArray(liveConverted.dataseries)) {
-        data = liveConverted;
-        sourceLabel = 'Live Astro GFS';
-      }
-    } catch (_) {}
-  }
-
-  if (data) {
-    APP_STATE.raw7TimerData = data;
+  if (result && result.data) {
+    APP_STATE.raw7TimerData = result.data;
     APP_STATE.isOfflineData = false;
-    APP_STATE.dataSourceLabel = sourceLabel;
+    APP_STATE.dataSourceLabel = result.sourceLabel;
 
-    try {
-      localStorage.setItem(
-        STORAGE_KEYS.LAST_FORECAST,
-        JSON.stringify({
-          timestamp: Date.now(),
-          lat,
-          lon,
-          locationName,
-          payload: data
-        })
-      );
-    } catch (_) {}
-
-    processSevenTimerPayload(data);
+    saveForecast(lat, lon, locationName, result.data);
+    processSevenTimerPayload(result.data);
     updateConnectionBadge();
     loader?.classList.add('hidden');
     if (cardsContainer) cardsContainer.style.opacity = '1';
     return;
   }
 
-  // Strategy 4: Offline Cache or Backup Model if there is genuinely no internet connection
-  console.warn('Nessuna connessione live disponibile, uso cache offline o backup.');
   APP_STATE.isOfflineData = true;
   updateConnectionBadge();
 
-  let loadedFromCache = false;
-  try {
-    const cachedRaw = localStorage.getItem(STORAGE_KEYS.LAST_FORECAST);
-    if (cachedRaw) {
-      const cached = JSON.parse(cachedRaw);
-      if (cached && cached.payload && Array.isArray(cached.payload.dataseries)) {
-        APP_STATE.raw7TimerData = cached.payload;
-        processSevenTimerPayload(cached.payload);
-        loadedFromCache = true;
-        showToast('Connessione assente: caricata ultima previsione salvata in cache.');
-      }
-    }
-  } catch (_) {}
-
-  if (!loadedFromCache) {
+  const cached = loadForecast();
+  if (cached) {
+    APP_STATE.raw7TimerData = cached.payload;
+    processSevenTimerPayload(cached.payload);
+    showToast('Connessione assente: caricata ultima previsione salvata in cache.');
+  } else {
     const fallback = createFallbackAstroPayload();
     APP_STATE.raw7TimerData = fallback;
     processSevenTimerPayload(fallback);
@@ -1000,9 +574,6 @@ async function fetchAstroForecast(lat, lon, locationName) {
   if (cardsContainer) cardsContainer.style.opacity = '1';
 }
 
-/**
- * Transforms raw 7Timer! `dataseries` into enriched chronological slot objects.
- */
 function processSevenTimerPayload(data) {
   const initDate = parseSevenTimerInit(data.init);
   const now = new Date();
@@ -1034,15 +605,13 @@ function processSevenTimerPayload(data) {
     };
   });
 
-  // Keep slots that are not older than 3 hours in the past
   const upcoming = enriched.filter((s) => s.hoursFromNow >= -3);
   APP_STATE.processedSlots = upcoming.length > 0 ? upcoming : enriched;
-
   renderFilteredView();
 }
 
 /* ==========================================================================
-   7. FILTERING & UI RENDERING (ADVISOR, KPI, CHART, CARDS)
+   6. FILTERING & UI RENDERING
    ========================================================================== */
 
 function getFilteredSlots() {
@@ -1050,22 +619,17 @@ function getFilteredSlots() {
   if (all.length === 0) return [];
 
   let filtered = [];
-
   if (APP_STATE.filterMode === 'tonight') {
-    // Next 18 hours, prioritizing twilight & night hours (18:00 - 06:00)
     const withinNextNight = all.slice(0, 9).filter((s) => s.isNight);
     filtered = withinNextNight.length > 0 ? withinNextNight : all.slice(0, 6);
   } else {
-    // Filter by horizon slider hours relative to the first available slot
     const baseTimepoint = all[0].timepoint;
     filtered = all.filter((s) => s.timepoint - baseTimepoint < APP_STATE.horizonHours);
   }
 
   if (APP_STATE.nightOnly) {
     const nightFiltered = filtered.filter((s) => s.isNight);
-    if (nightFiltered.length > 0) {
-      filtered = nightFiltered;
-    }
+    if (nightFiltered.length > 0) filtered = nightFiltered;
   }
 
   return filtered;
@@ -1088,15 +652,9 @@ function renderAdvisorBox(advisor) {
   const targetsEl = document.getElementById('advisor-targets');
   const warningsEl = document.getElementById('advisor-warnings');
 
-  if (scoreBadge) {
-    scoreBadge.textContent = `Indice Max: ${advisor.bestScore}/100`;
-  }
-  if (headlineEl) {
-    headlineEl.textContent = advisor.headline;
-  }
-  if (narrativeEl) {
-    narrativeEl.innerHTML = advisor.narrative;
-  }
+  if (scoreBadge) scoreBadge.textContent = `Indice Max: ${advisor.bestScore}/100`;
+  if (headlineEl) headlineEl.textContent = advisor.headline;
+  if (narrativeEl) narrativeEl.innerHTML = advisor.narrative;
   if (targetsEl) {
     targetsEl.innerHTML = advisor.targets
       .map((t) => `<span class="target-tag">${escapeHtml(t)}</span>`)
@@ -1121,35 +679,27 @@ function renderKPIStrip(slots) {
 
   if (!slots || slots.length === 0) return;
 
-  // Best Seeing
   const minSeeSlot = slots.reduce((prev, curr) => (curr.seeing < prev.seeing ? curr : prev), slots[0]);
   const seeDecoded = SEVEN_TIMER_DECODERS.seeing(minSeeSlot.seeing);
   if (bestSeeEl) bestSeeEl.textContent = `Classe ${minSeeSlot.seeing} (${seeDecoded.arcsec})`;
   if (bestSeeSub) bestSeeSub.textContent = `${seeDecoded.badge} • ore ${formatHour(minSeeSlot.date)}`;
 
-  // Best Transparency
-  const minTransSlot = slots.reduce(
-    (prev, curr) => (curr.transparency < prev.transparency ? curr : prev),
-    slots[0]
-  );
+  const minTransSlot = slots.reduce((prev, curr) => (curr.transparency < prev.transparency ? curr : prev), slots[0]);
   const transDecoded = SEVEN_TIMER_DECODERS.transparency(minTransSlot.transparency);
   if (bestTransEl) bestTransEl.textContent = `Classe ${minTransSlot.transparency}`;
   if (bestTransSub) bestTransSub.textContent = `${transDecoded.ext} • ore ${formatHour(minTransSlot.date)}`;
 
-  // Clear Sky Slots count (cloudcover <= 2)
   const clearCount = slots.filter((s) => s.cloudcover <= 2).length;
   if (clearSlotsEl) clearSlotsEl.textContent = `${clearCount} / ${slots.length} slot`;
   if (clearSlotsSub) clearSlotsSub.textContent = `${clearCount * 3}h di cielo sereno (<19%)`;
 
-  // Average / Max Wind & Lifted Index
   const maxWindSlot = slots.reduce(
     (prev, curr) => ((curr.wind10m?.speed || 1) > (prev.wind10m?.speed || 1) ? curr : prev),
     slots[0]
   );
   const windDecoded = SEVEN_TIMER_DECODERS.wind10m(maxWindSlot.wind10m);
   const avgLi = Math.round(
-    slots.reduce((acc, s) => acc + (typeof s.lifted_index === 'number' ? s.lifted_index : 2), 0) /
-      slots.length
+    slots.reduce((acc, s) => acc + (typeof s.lifted_index === 'number' ? s.lifted_index : 2), 0) / slots.length
   );
   if (windLiEl) windLiEl.textContent = windDecoded.kmh;
   if (windLiSub) windLiSub.textContent = `Dir. ${windDecoded.dir} • LI medio: ${avgLi > 0 ? '+' + avgLi : avgLi}`;
@@ -1188,7 +738,6 @@ function renderTrendChart(slots, bestTimepoint) {
     })
     .join('');
 
-  // Click bar to scroll smoothly to its corresponding detailed card
   chartEl.querySelectorAll('.trend-col').forEach((col) => {
     col.addEventListener('click', () => {
       const targetId = col.getAttribute('data-target-slot');
@@ -1209,9 +758,7 @@ function renderForecastCards(slots, bestTimepoint) {
   const countBadge = document.getElementById('slots-count-badge');
   if (!container) return;
 
-  if (countBadge) {
-    countBadge.textContent = `${slots.length} blocchi (${slots.length * 3}h)`;
-  }
+  if (countBadge) countBadge.textContent = `${slots.length} blocchi (${slots.length * 3}h)`;
 
   if (slots.length === 0) {
     container.innerHTML = `<p style="font-size:0.84rem; color:var(--text-secondary);">Nessuna previsione disponibile per i filtri selezionati.</p>`;
@@ -1249,7 +796,6 @@ function renderForecastCards(slots, bestTimepoint) {
           </div>
 
           <div class="metrics-grid">
-            <!-- Seeing -->
             <div class="metric-item">
               <div class="metric-header">
                 <span>SEEING (Cl. ${slot.seeing}/8)</span>
@@ -1259,7 +805,6 @@ function renderForecastCards(slots, bestTimepoint) {
               <span class="metric-sub">${see.label}</span>
             </div>
 
-            <!-- Cloud Cover -->
             <div class="metric-item">
               <div class="metric-header">
                 <span>NUVOLE (Cl. ${slot.cloudcover}/9)</span>
@@ -1269,7 +814,6 @@ function renderForecastCards(slots, bestTimepoint) {
               <span class="metric-sub">${cloud.label}</span>
             </div>
 
-            <!-- Transparency -->
             <div class="metric-item">
               <div class="metric-header">
                 <span>TRASPARENZA (Cl. ${slot.transparency}/8)</span>
@@ -1279,7 +823,6 @@ function renderForecastCards(slots, bestTimepoint) {
               <span class="metric-sub">${trans.label}</span>
             </div>
 
-            <!-- Wind 10m -->
             <div class="metric-item">
               <div class="metric-header">
                 <span>VENTO 10m (${wind.dir})</span>
@@ -1301,14 +844,12 @@ function renderForecastCards(slots, bestTimepoint) {
 }
 
 /* ==========================================================================
-   8. UI CONTROLS & INTERACTION BINDINGS
+   7. UI CONTROLS & INTERACTION BINDINGS
    ========================================================================== */
 
 function bindUIEvents() {
-  // 1. GPS Button
   document.getElementById('btn-gps')?.addEventListener('click', acquireBrowserGPS);
 
-  // 2. City Geocoding Search Form & Live Debounced Input
   const searchForm = document.getElementById('search-form');
   const searchInput = document.getElementById('city-search-input');
   const dropdown = document.getElementById('geocode-dropdown');
@@ -1321,13 +862,13 @@ function bindUIEvents() {
       dropdown?.classList.add('hidden');
       return;
     }
-    debounceTimer = setTimeout(() => searchCityNominatim(val), 420);
+    debounceTimer = setTimeout(() => handleCitySearch(val), 420);
   });
 
   searchForm?.addEventListener('submit', (e) => {
     e.preventDefault();
     clearTimeout(debounceTimer);
-    searchCityNominatim(searchInput?.value || '');
+    handleCitySearch(searchInput?.value || '');
   });
 
   dropdown?.addEventListener('click', (e) => {
@@ -1347,7 +888,6 @@ function bindUIEvents() {
     }
   });
 
-  // 3. Preset Location Chips
   document.querySelectorAll('.preset-chip').forEach((chip) => {
     chip.addEventListener('click', () => {
       const lat = parseFloat(chip.getAttribute('data-lat'));
@@ -1357,7 +897,6 @@ function bindUIEvents() {
     });
   });
 
-  // 4. Time Filter Pills & Horizon Slider
   const filterPills = document.querySelectorAll('.filter-pill');
   const slider = document.getElementById('horizon-slider');
   const sliderLabel = document.getElementById('slider-horizon-val');
@@ -1396,21 +935,17 @@ function bindUIEvents() {
     renderFilteredView();
   });
 
-  // 5. Night-Only Checkbox
   const nightCheckbox = document.getElementById('toggle-night-only');
   nightCheckbox?.addEventListener('change', () => {
     APP_STATE.nightOnly = nightCheckbox.checked;
     renderFilteredView();
   });
 
-  // 6. Red Night-Vision Mode Toggle
   const nightBtn = document.getElementById('btn-night-vision');
   nightBtn?.addEventListener('click', () => {
     const isRed = document.body.classList.toggle('red-night-mode');
     nightBtn.classList.toggle('active-red', isRed);
-    try {
-      localStorage.setItem(STORAGE_KEYS.RED_NIGHT_MODE, isRed ? '1' : '0');
-    } catch (_) {}
+    saveRedNightMode(isRed);
     showToast(
       isRed
         ? 'Modalità Visione Notturna Rossa attivata (protezione pupilla).'
@@ -1418,17 +953,16 @@ function bindUIEvents() {
     );
   });
 
-  // 7. Refresh Forecast Button
   document.getElementById('btn-refresh')?.addEventListener('click', () => {
     showToast('Aggiornamento dati da 7Timer! in corso...');
-    fetchAstroForecast(APP_STATE.lat, APP_STATE.lon, APP_STATE.locationName);
+    loadAstroForecast(APP_STATE.lat, APP_STATE.lon, APP_STATE.locationName);
   });
 
   updateCoordinatesReadout();
 }
 
 /* ==========================================================================
-   9. UTILITY HELPERS
+   8. UTILITY HELPERS
    ========================================================================== */
 
 function formatHour(date) {

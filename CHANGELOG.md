@@ -4,6 +4,12 @@ Tutte le modifiche rilevanti a **AstroSee** sono documentate in questo file seco
 
 ---
 
+## [1.0.1] - 2026-11-14
+
+### Changed
+- **Modularizzazione ES6:** Separata la logica JavaScript in moduli nativi `js/app.js` (UI e Advisor), `js/api.js` (chiamate 7Timer!, Open-Meteo, Nominatim e Bortle) e `js/storage.js` (persistenza `localStorage`).
+- **Struttura Standard Completa:** Aggiunte le cartelle `assets/img/` e `docs/` (`docs/architecture.md`) e aggiornato `sw.js` (`astrosee-static-v6`) per includere tutti i moduli nella cache PWA.
+
 ## [1.0.0] - 2026-11-14
 
 ### Added

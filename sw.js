@@ -5,14 +5,16 @@
  * ============================================================================
  */
 
-const STATIC_CACHE_NAME = 'astrosee-static-v5';
+const STATIC_CACHE_NAME = 'astrosee-static-v6';
 const DATA_CACHE_NAME = 'astrosee-data-v1';
 
 const APP_SHELL_ASSETS = [
   './',
   './index.html',
-  './css/style.css?v=5',
+  './css/style.css?v=6',
   './js/app.js',
+  './js/api.js',
+  './js/storage.js',
   './manifest.json',
   './assets/icons/icon.svg',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',

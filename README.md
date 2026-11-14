@@ -75,20 +75,25 @@ Nessun framework pesante o step di build richiesto: puro **HTML5**, **CSS3 Custo
 
 ```text
 AstroSee/
-├── index.html          # Struttura semantica Mobile-First e interfaccia utente
-├── manifest.json       # Web App Manifest per installazione PWA su iOS / Android / Desktop
-├── sw.js               # Service Worker per caching asset statici e previsioni offline
+├── index.html          # Entry point principale
+├── manifest.json       # Configurazione PWA (nome, icone, display standalone, colori)
+├── sw.js               # Service Worker per caching offline e aggiornamenti
 ├── server.js           # Server HTTP Node.js opzionale con proxy CORS nativo per 7Timer!
 ├── css/
-│   └── style.css       # Design System Deep Space Glassmorphism + Red Night-Vision Mode
+│   └── style.css       # Stili principali (variabili CSS, layout responsive, tema)
 ├── js/
-│   └── app.js          # Logica applicativa, decodifica 7Timer!, mappa Leaflet, Bortle e AI Advisor
+│   ├── app.js          # Logica principale e inizializzazione UI
+│   ├── api.js          # Chiamate fetch / gestione dati esterni (7Timer!, Open-Meteo, Nominatim)
+│   └── storage.js      # Gestione LocalStorage (cache offline, posizione, tema)
 ├── assets/
-│   └── icons/
-│       └── icon.svg    # Icona vettoriale astronomica (Disco di Airy & Stella)
-├── README.md           # Documentazione del progetto
-├── CHANGELOG.md        # Registro cronologico delle versioni (Keep a Changelog)
-└── .gitignore          # Esclusioni file di sistema, log e temporanei
+│   ├── icons/
+│   │   └── icon.svg    # Icona vettoriale PWA
+│   └── img/            # Immagini e risorse grafiche
+├── docs/
+│   └── architecture.md # Documentazione tecnica dell'architettura
+├── README.md
+├── CHANGELOG.md
+└── .gitignore
 ```
 
 ---
