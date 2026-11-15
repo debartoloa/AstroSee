@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AstroSee — Video Spot Promozionale UAI (Black Hole Edition)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #04060e;
+      color: #f1f5f9;
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1.25rem;
+      gap: 1rem;
+    }
+    .player-shell {
+      width: 100%;
+      max-width: 1040px;
+      background: rgba(15, 22, 43, 0.72);
+      border: 1px solid rgba(56, 189, 248, 0.28);
+      border-radius: 18px;
+      padding: 1rem;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.75);
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+    canvas {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border-radius: 12px;
+      background: #03050c;
+      display: block;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .btn-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+    }
+    button {
+      background: rgba(10, 15, 32, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      color: #f1f5f9;
+      padding: 0.6rem 1.05rem;
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 0.86rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+    button:hover:not(:disabled) {
+      border-color: #38bdf8;
+      transform: translateY(-1px);
+    }
+    button.primary {
+      background: linear-gradient(135deg, rgba(14, 165, 233, 0.3), rgba(129, 140, 248, 0.3));
+      border-color: #38bdf8;
+    }
+    button.record {
+      background: linear-gradient(135deg, rgba(192, 132, 252, 0.28), rgba(236, 72, 153, 0.28));
+      border-color: #c084fc;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .status-text {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="player-shell">
+    <canvas id="stage" width="1920" height="1080"></canvas>
+    <div class="controls">
+      <div class="btn-group">
+        <button id="btn-play" class="primary" type="button">▶ Riproduci Spot (24s)</button>
+        <button id="btn-record" class="record" type="button">⏺ Registra &amp; Scarica Video (.webm 1080p)</button>
+      </div>
+      <span id="status" class="status-text">Pronto • 1920×1080 @ 60fps</span>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('stage');
+    const ctx = canvas.getContext('2d');
+    const W = 1920;
+    const H = 1080;
+    const TOTAL_DURATION = 24.5; // seconds
+
+    // Starfield particles
+    const stars = Array.from({ length: 240 }, () => ({
+      angle: Math.random() * Math.PI * 2,
+      radius: 120 + Math.random() * 1150,
+      speed: 0.08 + Math.random() * 0.25,
+      size: 0.8 + Math.random() * 2.2,
+      alpha: 0.25 + Math.random() * 0.75,
+      hue: Math.random() > 0.7 ? '#38bdf8' : Math.random() > 0.5 ? '#c084fc' : '#f1f5f9'
+    }));
+
+    // Accretion disk particles
+    const diskParticles = Array.from({ length: 180 }, (_, i) => ({
+      angle: (i / 180) * Math.PI * 2 + Math.random() * 0.3,
+      dist: 135 + Math.random() * 190,
+      speed: 0.9 + Math.random() * 1.4,
+      size: 1.5 + Math.random() * 3.5,
+      color: Math.random() > 0.45 ? '#38bdf8' : Math.random() > 0.3 ? '#818cf8' : '#c084fc'
+    }));
+
+    const scenes = [
+      {
+        start: 0.0,
+        end: 4.2,
+        tag: 'PWA ASTRONOMICA • OPEN SOURCE',
+        title: 'AstroSee',
+        subtitle: 'Seeing Astronomico, Trasparenza & AI Observing Advisor',
+        bullets: [
+          '✦ Sviluppata in Vanilla Web Stack per la comunità astrofila',
+          '✦ Dark-Mode nativa + Visione Notturna Rossa (scotopica)'
+        ],
+        accent: '#38bdf8',
+        badge: 'v1.0.1 • Ready for Field'
+      },
+      {
+        start: 4.2,
+        end: 9.0,
+        tag: '01 • GEOLOCALIZZAZIONE FLESSIBILE',
+        title: 'Scegli il tuo Sito Osservativo',
+        subtitle: 'GPS Nativo • Mappa Interattiva Leaflet • Ricerca Nominatim',
+        bullets: [
+          '📍 Acquisizione immediata tramite GPS dello smartphone',
+          '🗺️ Mappa Dark-Mode con pin trascinabile per passi alpini',
+          '🔭 Preset rapidi: Asiago, Gran Sasso, Etna, La Palma'
+        ],
+        accent: '#38bdf8',
+        badge: '45.867°N, 11.527°E'
+      },
+      {
+        start: 9.0,
+        end: 13.8,
+        tag: '02 • QUALITÀ DEL BUIO & ALTITUDINE',
+        title: 'Scala Bortle (1–9) & SQM Automatici',
+        subtitle: 'Analisi istantanea di inquinamento luminoso ed elevazione',
+        bullets: [
+          '🌌 Calcolo classe Bortle 1–9 per qualsiasi coordinata',
+          '📏 Altitudine reale in metri e stima SQM (mag/arcsec²)',
+          '🎯 Adattamento automatico dei target consigliati'
+        ],
+        accent: '#34d399',
+        badge: 'Bortle 4 • ~20.8 mag/arcsec²'
+      },
+      {
+        start: 13.8,
+        end: 19.0,
+        tag: '03 • MOTORE 7TIMER! ASTRO + LIVE GFS',
+        title: 'Seeing, Trasparenza & Curva fino a 72h',
+        subtitle: 'Previsioni ogni 3 ore con semafori immediati e modalità Offline',
+        bullets: [
+          '🔭 Seeing (<0.5" – >2.5"), Trasparenza, Nuvole, Vento & Lifted Index',
+          '📊 Grafico interattivo 6h–72h con filtro Solo Fasce Notturne',
+          '📡 Service Worker Offline-Ready per siti montani senza campo'
+        ],
+        accent: '#818cf8',
+        badge: 'Indice Astro: 92/100 ★'
+      },
+      {
+        start: 19.0,
+        end: 24.5,
+        tag: '04 • AI OBSERVING ADVISOR & VISIONE ROSSA',
+        title: 'La Finestra Perfetta, in un Colpo d’Occhio',
+        subtitle: 'github.com/debartoloa/AstroSee',
+        bullets: [
+          '🤖 Individua lo slot migliore (es. 22:00–01:00) e segnala condensa >80%',
+          '👁️ Modalità Luce Rossa per preservare la pupilla al telescopio',
+          '📲 Installabile gratis su iOS, Android & Desktop (PWA)'
+        ],
+        accent: '#c084fc',
+        badge: 'Presentazione per U.A.I.'
+      }
+    ];
+
+    let animId = null;
+    let startTime = 0;
+    let isPlaying = false;
+
+    function easeInOutCubic(x) {
+      return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+    }
+
+    function drawBlackHole(t, suctionIntensity) {
+      const cx = W / 2;
+      const cy = H / 2;
+
+      // Deep space nebula background
+      const bg = ctx.createRadialGradient(cx, cy, 80, cx, cy, 1150);
+      bg.addColorStop(0, '#090e24');
+      bg.addColorStop(0.5, '#050814');
+      bg.addColorStop(1, '#020308');
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, W, H);
+
+      // Ambient nebula glows
+      const glow1 = ctx.createRadialGradient(W * 0.2, H * 0.25, 20, W * 0.2, H * 0.25, 620);
+      glow1.addColorStop(0, 'rgba(56, 189, 248, 0.12)');
+      glow1.addColorStop(1, 'transparent');
+      ctx.fillStyle = glow1;
+      ctx.fillRect(0, 0, W, H);
+
+      const glow2 = ctx.createRadialGradient(W * 0.82, H * 0.75, 20, W * 0.82, H * 0.75, 650);
+      glow2.addColorStop(0, 'rgba(192, 132, 252, 0.12)');
+      glow2.addColorStop(1, 'transparent');
+      ctx.fillStyle = glow2;
+      ctx.fillRect(0, 0, W, H);
+
+      // Swirling starfield pulled gently toward center
+      for (const s of stars) {
+        const a = s.angle + t * s.speed * (1 + suctionIntensity * 2.2);
+        const r = Math.max(85, s.radius - suctionIntensity * 140);
+        const x = cx + Math.cos(a) * r;
+        const y = cy + Math.sin(a) * r * 0.72;
+        ctx.globalAlpha = s.alpha;
+        ctx.fillStyle = s.hue;
+        ctx.beginPath();
+        ctx.arc(x, y, s.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      // Gravitational lensing outer halo
+      const haloRadius = 175 + suctionIntensity * 65;
+      const halo = ctx.createRadialGradient(cx, cy, 88, cx, cy, haloRadius + 130);
+      halo.addColorStop(0, 'rgba(0,0,0,1)');
+      halo.addColorStop(0.32, `rgba(56, 189, 248, ${0.48 + suctionIntensity * 0.35})`);
+      halo.addColorStop(0.55, `rgba(192, 132, 252, ${0.28 + suctionIntensity * 0.25})`);
+      halo.addColorStop(1, 'transparent');
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(cx, cy, haloRadius + 130, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Accretion disk vortex particles
+      for (const p of diskParticles) {
+        const a = p.angle + t * p.speed * (1 + suctionIntensity * 2.6);
+        const r = p.dist * (1 - suctionIntensity * 0.25);
+        const x = cx + Math.cos(a) * r * 1.45;
+        const y = cy + Math.sin(a) * r * 0.52;
+        ctx.globalAlpha = 0.65;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(x, y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      // Event Horizon (pure black singularity)
+      const ehRadius = 92 + suctionIntensity * 18;
+      ctx.fillStyle = '#000000';
+      ctx.beginPath();
+      ctx.arc(cx, cy, ehRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Photon ring
+      ctx.strokeStyle = 'rgba(186, 230, 253, 0.85)';
+      ctx.lineWidth = 3 + suctionIntensity * 3;
+      ctx.beginPath();
+      ctx.arc(cx, cy, ehRadius + 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    function drawRoundRect(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+
+    function drawAppPreview(sceneIndex, px, py, pw, ph, accent) {
+      ctx.save();
+      // Device / UI Card Frame
+      ctx.fillStyle = '#060916';
+      drawRoundRect(px, py, pw, ph, 24);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Subtle inner glow
+      const pg = ctx.createRadialGradient(px + pw * 0.5, py + 40, 10, px + pw * 0.5, py + 40, 260);
+      pg.addColorStop(0, 'rgba(56, 189, 248, 0.14)');
+      pg.addColorStop(1, 'transparent');
+      ctx.fillStyle = pg;
+      drawRoundRect(px, py, pw, ph, 24);
+      ctx.fill();
+
+      if (sceneIndex === 0) {
+        // 0. Intro: AstroSee Header + Airy Disk Star Logo + Modes
+        ctx.fillStyle = 'rgba(15, 22, 43, 0.9)';
+        drawRoundRect(px + 20, py + 24, pw - 40, 62, 14);
+        ctx.fill();
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = '800 22px "Inter", sans-serif';
+        ctx.fillText('AstroSee', px + 38, py + 62);
+        ctx.fillStyle = 'rgba(16, 185, 129, 0.2)';
+        drawRoundRect(px + pw - 175, py + 38, 136, 32, 16);
+        ctx.fill();
+        ctx.fillStyle = '#34d399';
+        ctx.font = '700 14px "JetBrains Mono", monospace';
+        ctx.fillText('● 7Timer! Live', px + pw - 163, py + 59);
+
+        // Airy Disk Star Emblem
+        const cx = px + pw / 2;
+        const cy = py + 245;
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 92, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(192, 132, 252, 0.6)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 58, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // 4-point diffraction star
+        ctx.fillStyle = '#fde047';
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 68);
+        ctx.lineTo(cx + 12, cy - 12);
+        ctx.lineTo(cx + 68, cy);
+        ctx.lineTo(cx + 12, cy + 12);
+        ctx.lineTo(cx, cy + 68);
+        ctx.lineTo(cx - 12, cy + 12);
+        ctx.lineTo(cx - 68, cy);
+        ctx.lineTo(cx - 12, cy - 12);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 11, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Bottom KPI pills
+        ctx.fillStyle = 'rgba(255,255,255,0.05)';
+        drawRoundRect(px + 24, py + 390, pw - 48, 52, 12);
+        ctx.fill();
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = '600 17px "Inter", sans-serif';
+        ctx.fillText('🌙 Deep Space + Visione Notturna Rossa', px + 42, py + 422);
+
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.14)';
+        drawRoundRect(px + 24, py + 458, pw - 48, 48, 12);
+        ctx.fill();
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = '700 16px "JetBrains Mono", monospace';
+        ctx.fillText('100% Vanilla PWA • Offline Ready', px + 56, py + 488);
+      } else if (sceneIndex === 1) {
+        // 1. Posizione Osservativa: GPS Button + Search + Dark Map + Pin
+        ctx.fillStyle = '#f1f5f9';
+        ctx.font = '700 19px "Inter", sans-serif';
+        ctx.fillText('📍 Posizione Osservativa', px + 24, py + 46);
+
+        // GPS Button
+        const gpsGrad = ctx.createLinearGradient(px + 24, 0, px + pw - 24, 0);
+        gpsGrad.addColorStop(0, 'rgba(14, 165, 233, 0.35)');
+        gpsGrad.addColorStop(1, 'rgba(99, 102, 241, 0.35)');
+        ctx.fillStyle = gpsGrad;
+        drawRoundRect(px + 24, py + 64, pw - 48, 46, 12);
+        ctx.fill();
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = '600 16px "Inter", sans-serif';
+        ctx.fillText('⊕ Acquisisci Posizione GPS', px + 95, py + 93);
+
+        // Search input
+        ctx.fillStyle = 'rgba(15, 22, 43, 0.9)';
+        drawRoundRect(px + 24, py + 124, pw - 48, 40, 10);
+        ctx.fill();
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '500 15px "Inter", sans-serif';
+        ctx.fillText('🔍 Cerca città o osservatorio...', px + 40, py + 149);
+
+        // Dark Leaflet Map Box
+        ctx.fillStyle = '#091520';
+        drawRoundRect(px + 24, py + 178, pw - 48, 225, 14);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+        ctx.stroke();
+
+        // Map contour / roads lines
+        ctx.strokeStyle = 'rgba(52, 211, 153, 0.22)';
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i < 4; i++) {
+          ctx.beginPath();
+          ctx.moveTo(px + 30, py + 210 + i * 48);
+          ctx.bezierCurveTo(px + 140, py + 190 + i * 40, px + 280, py + 250 + i * 30, px + pw - 30, py + 205 + i * 45);
+          ctx.stroke();
+        }
+        ctx.strokeStyle = 'rgba(244, 114, 182, 0.28)';
+        ctx.beginPath();
+        ctx.moveTo(px + 65, py + 185);
+        ctx.lineTo(px + 240, py + 395);
+        ctx.stroke();
+
+        // Glowing Cyan Pin
+        const pinX = px + pw / 2;
+        const pinY = py + 290;
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
+        ctx.beginPath();
+        ctx.arc(pinX, pinY, 26, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(pinX, pinY, 11, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#050711';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        // Preset Chips
+        const chips = ['✨ Asiago', '🏔️ Gran Sasso', '🌋 Etna'];
+        chips.forEach((c, i) => {
+          const cx = px + 24 + i * 136;
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+          drawRoundRect(cx, py + 422, 126, 34, 17);
+          ctx.fill();
+          ctx.fillStyle = '#cbd5e1';
+          ctx.font = '600 14px "Inter", sans-serif';
+          ctx.fillText(c, cx + 16, py + 444);
+        });
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = '600 14px "JetBrains Mono", monospace';
+        ctx.fillText('Asiago • 45.867°N, 11.527°E', px + 24, py + 492);
+      } else if (sceneIndex === 2) {
+        // 2. Scala Bortle (1-9) & SQM
+        ctx.fillStyle = '#f1f5f9';
+        ctx.font = '700 19px "Inter", sans-serif';
+        ctx.fillText('🌌 Qualità del Buio (Bortle)', px + 24, py + 48);
+
+        // Coordinates bar
+        ctx.fillStyle = 'rgba(15, 22, 43, 0.9)';
+        drawRoundRect(px + 24, py + 72, pw - 48, 52, 12);
+        ctx.fill();
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = '700 16px "Inter", sans-serif';
+        ctx.fillText('Osservatorio di Asiago', px + 40, py + 104);
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = '600 14px "JetBrains Mono", monospace';
+        ctx.fillText('1036 m s.l.m.', px + pw - 140, py + 104);
+
+        // Highlighted Bortle Card
+        ctx.fillStyle = 'rgba(16, 185, 129, 0.12)';
+        drawRoundRect(px + 24, py + 142, pw - 48, 128, 16);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = '#34d399';
+        ctx.font = '800 38px "Inter", sans-serif';
+        ctx.fillText('Bortle 4', px + 44, py + 196);
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = '600 17px "Inter", sans-serif';
+        ctx.fillText('Transizione Rurale / Suburbana', px + 44, py + 228);
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '600 15px "JetBrains Mono", monospace';
+        ctx.fillText('SQM stimato: ~20.49–21.69 mag/arcsec²', px + 44, py + 254);
+
+        // Bortle 1-9 Spectrum Bar
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '700 14px "Inter", sans-serif';
+        ctx.fillText('SCALA BORTLE (1 = BUIO ASSOLUTO, 9 = CITTÀ)', px + 24, py + 312);
+        const bColors = ['#0f172a', '#1e293b', '#0284c7', '#10b981', '#84cc16', '#eab308', '#f97316', '#ef4444', '#dc2626'];
+        bColors.forEach((col, i) => {
+          const bx = px + 24 + i * 44;
+          ctx.fillStyle = col;
+          drawRoundRect(bx, py + 330, 38, 42, 8);
+          ctx.fill();
+          if (i === 3) {
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+          }
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '700 15px "JetBrains Mono", monospace';
+          ctx.fillText(String(i + 1), bx + 14, py + 357);
+        });
+
+        // Target hint
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.12)';
+        drawRoundRect(px + 24, py + 408, pw - 48, 86, 12);
+        ctx.fill();
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = '700 15px "Inter", sans-serif';
+        ctx.fillText('🎯 Target consigliati per Bortle 4:', px + 40, py + 438);
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = '500 15px "Inter", sans-serif';
+        ctx.fillText('Galassie deboli, Nebulose & Via Lattea', px + 40, py + 468);
+      } else if (sceneIndex === 3) {
+        // 3. Curva Qualità 72h + Slot Card 7Timer!
+        ctx.fillStyle = '#f1f5f9';
+        ctx.font = '700 18px "Inter", sans-serif';
+        ctx.fillText('📊 Curva di Qualità (Step 3h)', px + 24, py + 46);
+
+        // Bar Chart Box
+        ctx.fillStyle = 'rgba(15, 22, 43, 0.9)';
+        drawRoundRect(px + 24, py + 64, pw - 48, 165, 14);
+        ctx.fill();
+
+        const scores = [58, 76, 88, 92, 84, 65, 40, 32, 68, 86, 90, 78];
+        scores.forEach((sc, i) => {
+          const bx = px + 40 + i * 31;
+          const bh = Math.round((sc / 100) * 95);
+          const col = sc >= 70 ? '#34d399' : sc >= 42 ? '#fbbf24' : '#f87171';
+          ctx.fillStyle = 'rgba(148, 163, 184, 0.14)';
+          drawRoundRect(bx, py + 102, 16, 95, 8);
+          ctx.fill();
+          ctx.fillStyle = col;
+          drawRoundRect(bx, py + 102 + (95 - bh), 16, bh, 8);
+          ctx.fill();
+          if (sc === 92) {
+            ctx.fillStyle = '#34d399';
+            ctx.font = '700 12px "JetBrains Mono", monospace';
+            ctx.fillText('★92', bx - 4, py + 94);
+          }
+        });
+
+        // Detailed 3-Hour Slot Card
+        ctx.fillStyle = 'rgba(15, 22, 43, 0.9)';
+        drawRoundRect(px + 24, py + 246, pw - 48, 252, 16);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.55)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = '700 18px "Inter", sans-serif';
+        ctx.fillText('🌙 22:00 – 01:00', px + 42, py + 282);
+        ctx.fillStyle = 'rgba(16, 185, 129, 0.2)';
+        drawRoundRect(px + pw - 196, py + 260, 154, 30, 15);
+        ctx.fill();
+        ctx.fillStyle = '#34d399';
+        ctx.font = '700 13px "Inter", sans-serif';
+        ctx.fillText('★ Ottimo (92/100)', px + pw - 183, py + 280);
+
+        const metrics = [
+          { k: 'SEEING (Cl. 2)', v: '0.5–0.75"', c: '#34d399' },
+          { k: 'NUVOLE (Cl. 1)', v: '0–6% Sereno', c: '#34d399' },
+          { k: 'TRASPARENZA', v: '<0.3 mag/am', c: '#34d399' },
+          { k: 'VENTO 10m', v: '1–12 km/h N', c: '#34d399' }
+        ];
+        metrics.forEach((m, i) => {
+          const mx = px + 40 + (i % 2) * 190;
+          const my = py + 312 + Math.floor(i / 2) * 78;
+          ctx.fillStyle = 'rgba(255,255,255,0.04)';
+          drawRoundRect(mx, my, 178, 66, 10);
+          ctx.fill();
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = '700 11px "Inter", sans-serif';
+          ctx.fillText(m.k, mx + 12, my + 22);
+          ctx.fillStyle = m.c;
+          ctx.beginPath();
+          ctx.arc(mx + 162, my + 18, 4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#f8fafc';
+          ctx.font = '700 17px "Inter", sans-serif';
+          ctx.fillText(m.v, mx + 12, my + 48);
+        });
+      } else {
+        // 4. AI Observing Advisor + Visione Rossa Preview
+        ctx.fillStyle = '#f1f5f9';
+        ctx.font = '700 19px "Inter", sans-serif';
+        ctx.fillText('✨ AI Observing Advisor', px + 24, py + 48);
+
+        ctx.fillStyle = 'rgba(19, 27, 58, 0.9)';
+        drawRoundRect(px + 24, py + 72, pw - 48, 232, 16);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(192, 132, 252, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = '#c084fc';
+        ctx.font = '700 14px "JetBrains Mono", monospace';
+        ctx.fillText('FINESTRA MIGLIORE INDIVIDUATA', px + 42, py + 106);
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = '700 21px "Inter", sans-serif';
+        ctx.fillText('Dalle 22:00 alle 01:00 (Ven 13)', px + 42, py + 142);
+
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = '500 15px "Inter", sans-serif';
+        ctx.fillText('Seeing stabile in classe 2 (0.5–0.75")', px + 42, py + 176);
+        ctx.fillText('e nuvolosità azzerata (0–6%).', px + 42, py + 198);
+
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.14)';
+        drawRoundRect(px + 42, py + 224, pw - 84, 34, 8);
+        ctx.fill();
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = '600 14px "Inter", sans-serif';
+        ctx.fillText('🪐 Alta Risoluzione & Deep-Sky', px + 54, py + 246);
+
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = '600 13px "Inter", sans-serif';
+        ctx.fillText('💧 Avviso: UR >80% dopo le 02:00 (anticondensa)', px + 42, py + 286);
+
+        // Red Night Vision Preview Box
+        ctx.fillStyle = 'rgba(38, 5, 5, 0.92)';
+        drawRoundRect(px + 24, py + 324, pw - 48, 174, 16);
+        ctx.fill();
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = '#fca5a5';
+        ctx.font = '700 17px "Inter", sans-serif';
+        ctx.fillText('👁️ Modalità Visione Notturna Rossa', px + 42, py + 362);
+        ctx.fillStyle = '#f87171';
+        ctx.font = '500 14px "Inter", sans-serif';
+        ctx.fillText('Preserva l’adattamento scotopico al telescopio', px + 42, py + 392);
+
+        ctx.fillStyle = 'rgba(220, 38, 38, 0.25)';
+        drawRoundRect(px + 42, py + 416, 176, 56, 10);
+        ctx.fill();
+        ctx.fillStyle = '#fecaca';
+        ctx.font = '700 15px "JetBrains Mono", monospace';
+        ctx.fillText('Seeing: 0.5"', px + 58, py + 450);
+
+        ctx.fillStyle = 'rgba(220, 38, 38, 0.25)';
+        drawRoundRect(px + 230, py + 416, 176, 56, 10);
+        ctx.fill();
+        ctx.fillStyle = '#fecaca';
+        ctx.fillText('Bortle: 4', px + 260, py + 450);
+      }
+
+      ctx.restore();
+    }
+
+    function drawSceneCard(scene, sceneIndex, localT, duration) {
+      const enterDur = 0.75;
+      const exitDur = 0.85;
+      let scale = 1;
+      let angle = 0;
+      let alpha = 1;
+
+      if (localT < enterDur) {
+        // Ejected from Black Hole singularity
+        const p = easeInOutCubic(localT / enterDur);
+        scale = 0.08 + 0.92 * p;
+        angle = (1 - p) * -0.55;
+        alpha = p;
+      } else if (localT > duration - exitDur) {
+        // Pulled spirally into the Black Hole!
+        const p = easeInOutCubic((localT - (duration - exitDur)) / exitDur);
+        scale = 1 - 0.95 * p;
+        angle = p * 0.85;
+        alpha = 1 - p;
+      }
+
+      ctx.save();
+      ctx.translate(W / 2, H / 2);
+      ctx.rotate(angle);
+      ctx.scale(scale, scale);
+      ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+
+      const cardW = 1480;
+      const cardH = 700;
+      const padX = 56;
+      const leftColW = 840;
+      const x = -cardW / 2;
+      const y = -cardH / 2;
+
+      // Frosted Glass Card
+      ctx.fillStyle = 'rgba(10, 15, 34, 0.88)';
+      drawRoundRect(x, y, cardW, cardH, 34);
+      ctx.fill();
+
+      ctx.strokeStyle = scene.accent;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+
+      // Top Tag Pill (auto-sized to text width)
+      ctx.font = '700 18px "JetBrains Mono", monospace';
+      const tagW = Math.min(leftColW * 0.72, ctx.measureText(scene.tag).width + 40);
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.14)';
+      drawRoundRect(x + padX, y + 52, tagW, 40, 20);
+      ctx.fill();
+      ctx.fillStyle = scene.accent;
+      ctx.fillText(scene.tag, x + padX + 20, y + 78);
+
+      // Right Status Badge (above app preview)
+      ctx.font = '700 18px "JetBrains Mono", monospace';
+      const badgeW = Math.min(460, ctx.measureText(scene.badge).width + 40);
+      const badgeX = x + cardW - padX - badgeW;
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.16)';
+      drawRoundRect(badgeX, y + 52, badgeW, 40, 20);
+      ctx.fill();
+      ctx.fillStyle = '#34d399';
+      ctx.fillText(scene.badge, badgeX + 20, y + 78);
+
+      // Main Title (auto-fitted inside leftColW)
+      let titleSize = 50;
+      ctx.font = `800 ${titleSize}px "Inter", sans-serif`;
+      while (ctx.measureText(scene.title).width > leftColW && titleSize > 30) {
+        titleSize -= 2;
+        ctx.font = `800 ${titleSize}px "Inter", sans-serif`;
+      }
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillText(scene.title, x + padX, y + 180);
+
+      // Subtitle (auto-fitted inside leftColW)
+      let subSize = 25;
+      ctx.font = `600 ${subSize}px "Inter", sans-serif`;
+      while (ctx.measureText(scene.subtitle).width > leftColW && subSize > 17) {
+        subSize -= 1;
+        ctx.font = `600 ${subSize}px "Inter", sans-serif`;
+      }
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillText(scene.subtitle, x + padX, y + 230);
+
+      // Divider
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.18)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + padX, y + 270);
+      ctx.lineTo(x + padX + leftColW, y + 270);
+      ctx.stroke();
+
+      // Feature Bullets (auto-fitted inside leftColW)
+      scene.bullets.forEach((b, idx) => {
+        const by = y + 356 + idx * 92;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.045)';
+        drawRoundRect(x + padX, by - 46, leftColW, 68, 16);
+        ctx.fill();
+
+        let bSize = 24;
+        ctx.font = `600 ${bSize}px "Inter", sans-serif`;
+        while (ctx.measureText(b).width > leftColW - 44 && bSize > 16) {
+          bSize -= 1;
+          ctx.font = `600 ${bSize}px "Inter", sans-serif`;
+        }
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fillText(b, x + padX + 22, by - 3);
+      });
+
+      // Right Column: Live App Section Preview
+      const previewW = 460;
+      const previewH = 524;
+      const previewX = x + cardW - padX - previewW;
+      const previewY = y + 120;
+      drawAppPreview(sceneIndex, previewX, previewY, previewW, previewH, scene.accent);
+
+      ctx.restore();
+    }
+
+    function renderFrame(elapsed) {
+      const t = Math.min(elapsed, TOTAL_DURATION);
+      let activeIndex = scenes.findIndex((s) => t >= s.start && t <= s.end);
+      if (activeIndex < 0) activeIndex = scenes.length - 1;
+      const activeScene = scenes[activeIndex];
+      const localT = t - activeScene.start;
+      const dur = activeScene.end - activeScene.start;
+
+      // Boost gravitational suction during scene transitions
+      let suction = 0;
+      if (localT < 0.75) suction = 1 - localT / 0.75;
+      else if (localT > dur - 0.85) suction = (localT - (dur - 0.85)) / 0.85;
+
+      drawBlackHole(t, suction);
+      drawSceneCard(activeScene, activeIndex, localT, dur);
+
+      // Progress bar at bottom
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.7)';
+      ctx.fillRect(0, H - 6, (t / TOTAL_DURATION) * W, 6);
+    }
+
+    function playSpot(onComplete) {
+      cancelAnimationFrame(animId);
+      isPlaying = true;
+      startTime = performance.now();
+      const status = document.getElementById('status');
+
+      function step(now) {
+        const elapsed = (now - startTime) / 1000;
+        renderFrame(elapsed);
+        status.textContent = `Riproduzione: ${elapsed.toFixed(1)}s / ${TOTAL_DURATION.toFixed(1)}s`;
+        if (elapsed < TOTAL_DURATION) {
+          animId = requestAnimationFrame(step);
+        } else {
+          isPlaying = false;
+          status.textContent = 'Spot completato • Pronto per il download o replay';
+          if (onComplete) onComplete();
+        }
+      }
+      animId = requestAnimationFrame(step);
+    }
+
+    document.getElementById('btn-play').addEventListener('click', () => playSpot());
+
+    document.getElementById('btn-record').addEventListener('click', () => {
+      const btnRec = document.getElementById('btn-record');
+      const btnPlay = document.getElementById('btn-play');
+      const status = document.getElementById('status');
+
+      if (!canvas.captureStream || typeof MediaRecorder === 'undefined') {
+        alert('Il tuo browser non supporta MediaRecorder su Canvas. Usa Chrome o Edge.');
+        return;
+      }
+
+      btnRec.disabled = true;
+      btnPlay.disabled = true;
+      status.textContent = 'Registrazione 1080p in corso (24.5s)...';
+
+      const stream = canvas.captureStream(60);
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9'
+        : 'video/webm';
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8000000 });
+      const chunks = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'AstroSee_Promo_UAI_1080p.webm';
+        a.click();
+        URL.revokeObjectURL(url);
+        btnRec.disabled = false;
+        btnPlay.disabled = false;
+        status.textContent = 'Video scaricato: AstroSee_Promo_UAI_1080p.webm';
+      };
+
+      recorder.start();
+      playSpot(() => {
+        setTimeout(() => recorder.stop(), 200);
+      });
+    });
+
+    // Draw initial cover frame
+    renderFrame(1.2);
+  </script>
+</body>
+</html>
