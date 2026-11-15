@@ -5,18 +5,20 @@
  * ============================================================================
  */
 
-const STATIC_CACHE_NAME = 'astrosee-static-v6';
+const STATIC_CACHE_NAME = 'astrosee-static-v7';
 const DATA_CACHE_NAME = 'astrosee-data-v1';
 
 const APP_SHELL_ASSETS = [
-  './',
-  './index.html',
-  './css/style.css?v=6',
-  './js/app.js',
-  './js/api.js',
-  './js/storage.js',
-  './manifest.json',
-  './assets/icons/icon.svg',
+  '/',
+  '/index.html',
+  '/css/style.css?v=6',
+  '/js/app.js',
+  '/js/api.js',
+  '/js/storage.js',
+  '/manifest.json',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/assets/icons/icon.svg',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 ];
